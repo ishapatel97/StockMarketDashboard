@@ -473,6 +473,12 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
         except Exception as e:
             print(f"Row parse error {r[0]}: {e}")
             continue
+    for r in results:
+        try:
+            r["market_cap_billion"] = _get_market_cap(r["symbol"])
+            time.sleep(0.1)
+        except Exception:
+            r["market_cap_billion"] = 0.0
     return results
 
 def get_chart_data(symbol: str):
