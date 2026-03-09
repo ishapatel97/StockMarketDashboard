@@ -29,7 +29,7 @@ _INGEST_PROGRESS = {
 _PROGRESS_LOCK = Lock()
 
 
-# ── Polygon helpers ────────────────────────────────────────────────────────────
+# ── Polygon helpers ───────────────────���────────────────────────────────────────
 
 def _polygon_get(path: str, params: dict = None) -> dict:
     """Make a GET request to Polygon.io and return the JSON body."""
@@ -379,30 +379,37 @@ def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
 
 
 def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
-    """Return top stocks ranked by volume surge, enriched with market cap from Polygon."""
-    all_tickers = load_tickers()
+    """TEMP: Return latest DB row per symbol without heavy calculations/filters."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT symbol, company, close_price AS price, volume AS today_volume, date
+            FROM (
+              SELECT symbol, company, close_price, volume, date,
+                     ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) rn
+              FROM stock_prices
+              WHERE close_price IS NOT NULL AND volume IS NOT NULL
+            ) t
+            WHERE rn = 1
+            ORDER BY date DESC
+            LIMIT :limit
+        """), {"limit": limit}).fetchall()
+    finally:
+        db.close()
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(
-            lambda t: analyze_stock_from_db(t, min_volume_surge_pct), all_tickers
-        ))
-
-    filtered = [
-        r for r in results
-        if r and r["avg_volume"] >= 500_000 and r["price"] >= 5
-    ]
-
-    # Enrich market cap from Polygon
-    for r in filtered:
-        try:
-            r["market_cap_billion"] = _get_market_cap(r["symbol"])
-            time.sleep(0.1)
-        except Exception:
-            r["market_cap_billion"] = 0
-
-    filtered = [r for r in filtered if r.get("market_cap_billion", 0) >= 1]
-    filtered.sort(key=lambda x: x["volume_surge"], reverse=True)
-    return filtered[:max(5, min(limit, len(filtered)))]
+    results = []
+    for r in rows:
+        results.append({
+            "symbol":             r[0],
+            "company":            r[1] or "",
+            "price":              float(r[2]) if r[2] is not None else 0.0,
+            "today_volume":       int(r[3]) if r[3] is not None else 0,
+            "avg_volume":         0,
+            "volume_surge":       0.0,
+            "price_change":       0.0,
+            "market_cap_billion": 0.0,
+        })
+    return results
 
 
 def get_chart_data(symbol: str):
