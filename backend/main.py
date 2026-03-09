@@ -52,7 +52,7 @@ def market_open_ingest():
 
 
 scheduler = BackgroundScheduler(timezone=ET)
-scheduler.add_job(scheduled_ingest,    CronTrigger(minute="*/5"),                                          id="ingest_15min",        replace_existing=True)
+scheduler.add_job(scheduled_ingest,    CronTrigger(minute="*/15"),                                          id="ingest_15min",        replace_existing=True)
 scheduler.add_job(market_open_ingest,  CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=ET), id="market_open_ingest",   replace_existing=True)
 
 
@@ -85,7 +85,6 @@ def home():
 
 @app.get("/sectors")
 def sectors():
-    """Return all distinct sectors available in DB."""
     return get_all_sectors()
 
 
