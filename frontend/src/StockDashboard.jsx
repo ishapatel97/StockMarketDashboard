@@ -32,7 +32,7 @@ function StockDashboard() {
 
   const refreshStocks = () => {
     setLoadingStocks(true);
-    axios.get("${API}/stocks", { params: { threshold, limit: displayCount } })
+    axios.get(`${API}/stocks`, { params: { threshold, limit: displayCount } })
       .then((res) => setStocks(res.data))
       .catch((err) => console.error(err))
       .finally(() => setLoadingStocks(false));
@@ -47,7 +47,7 @@ function StockDashboard() {
     try {
       const poll = async () => {
         try {
-          const p = await axios.get("${API}/ingest-progress");
+          const p = await axios.get(`${API}/ingest-progress`);
           const prog = p.data || {};
           const {
             total_tickers = 0,
@@ -69,7 +69,7 @@ function StockDashboard() {
 
       // Start polling first to display 0/0 if needed
       intervalId = setInterval(poll, 1000);
-      await axios.post("${API}/ingest-all");
+      await axios.post(`${API}/ingest-all`);
       // Final poll to capture completed numbers
       await poll();
     } catch (err) {
