@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -14,3 +15,4 @@ SessionLocal = sessionmaker(
     autoflush=False,
     bind=engine
 )
+Base= declarative_base()
