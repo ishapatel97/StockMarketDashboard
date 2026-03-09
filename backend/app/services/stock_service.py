@@ -362,7 +362,7 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
             FROM latest l
             JOIN prev    p  ON l.symbol = p.symbol
             JOIN avg_vol a  ON l.symbol = a.symbol
-            LEFT JOIN mc    ON l.symbol = mc.symbol
+            JOIN mc    ON l.symbol = mc.symbol
             WHERE a.avg_volume >= 500000
               AND l.price >= 5
               AND ((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100) >= :threshold
@@ -401,9 +401,12 @@ def get_chart_data(symbol: str):
     db = SessionLocal()
     rows = db.execute(text("""
         SELECT date, close_price, volume FROM stock_prices
-        WHERE symbol = :symbol ORDER BY date ASC LIMIT 60
+        WHERE symbol = :symbol ORDER BY date DESC LIMIT 20
     """), {"symbol": symbol}).fetchall()
     db.close()
+
+# Reverse to get ascending order for chart
+    rows = list(reversed(rows))
 
     if len(rows) >= 20:
         dates   = [str(r[0])[:10] for r in rows]

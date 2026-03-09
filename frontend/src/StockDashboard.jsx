@@ -13,8 +13,8 @@ import {
 import { Line } from "react-chartjs-2";
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale);
-const API = "https://stockmarketdashboard-727w.onrender.com"; //productions frontend URL
-//const API = "http://127.0.0.1:8000"; //local frontned URL
+//const API = "https://stockmarketdashboard-727w.onrender.com"; //productions frontend URL
+const API = "http://127.0.0.1:8000"; //local frontned URL
 
 function StockDashboard() {
   const [stocks, setStocks] = useState([]);
