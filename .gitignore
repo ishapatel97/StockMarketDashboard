@@ -2,8 +2,11 @@
 **/.env
 backend/.env
 frontend/.env
-.env.* (if you use variants)
+.env.*
 node_modules/
-.venv/ venv/
-.pytest_cache/ pycache/
+.venv/
+venv/
+.pytest_cache/
+**/__pycache__/
+*.pyc
 .DS_Store
