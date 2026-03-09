@@ -152,20 +152,27 @@ def _call_groq(prompt: str, max_tokens: int = 120) -> str:
         return "GROQ_API_KEY not set."
     if Groq is None:
         return "Groq client not installed."
-    try:
-        client = Groq(api_key=api_key)
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a precise financial analyst. Be extremely concise."},
-                {"role": "user",   "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content or "No response."
-    except Exception as e:
-        return f"AI error: {e}"
+    
+    for attempt in range(3):  # retry up to 3 times
+        try:
+            client = Groq(api_key=api_key)
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "You are a precise financial analyst. Be extremely concise."},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content or "No response."
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg and attempt < 2:
+                wait = (attempt + 1) * 3  # 3s, then 6s
+                time.sleep(wait)
+                continue
+            return f"AI error: {e}"
 
 
 def generate_reason_with_groq(prompt: str) -> str:

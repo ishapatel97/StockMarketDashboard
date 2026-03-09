@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from typing import List
 
 from database import SessionLocal
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,13 +18,9 @@ BATCH_SIZE      = 200
 
 # ── In-memory progress tracker ────────────────────────────────────────────────
 _INGEST_PROGRESS = {
-    "started": False,
-    "done": False,
-    "total_tickers": 0,
-    "processed_tickers": 0,
-    "rows_inserted": 0,
-    "current_chunk": 0,
-    "total_chunks": 0,
+    "started": False, "done": False, "total_tickers": 0,
+    "processed_tickers": 0, "rows_inserted": 0,
+    "current_chunk": 0, "total_chunks": 0,
 }
 _PROGRESS_LOCK = Lock()
 
@@ -260,6 +257,22 @@ def ingest_next_batch():
     return {"batch_size": len(batch), "processed": processed}
 
 
+# ── Sectors ───────────────────────────────────────────────────────────────────
+
+def get_all_sectors() -> List[str]:
+    """Return distinct non-null sectors from DB."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT DISTINCT sector FROM stock_prices
+            WHERE sector IS NOT NULL AND sector != ''
+            ORDER BY sector
+        """)).fetchall()
+        return [r[0] for r in rows]
+    finally:
+        db.close()
+
+
 # ── Analysis ──────────────────────────────────────────────────────────────────
 
 def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
@@ -319,10 +332,30 @@ def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
         return None
 
 
-def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
+def get_top_stocks_from_db(
+    min_volume_surge_pct: float = 1.5,
+    limit: int = 10,
+    sectors: List[str] = None,
+):
+    """
+    Single fast SQL query with optional sector filter.
+    sectors=None means all sectors.
+    sectors=["Technology","Healthcare"] filters to those sectors only.
+    limit=50 means return up to 50, applied AFTER sector filter.
+    """
     db = SessionLocal()
     try:
-        rows = db.execute(text("""
+        # Build sector filter clause
+        sector_clause = ""
+        params = {"threshold": min_volume_surge_pct, "limit": limit}
+
+        if sectors:
+            placeholders = ", ".join([f":sector_{i}" for i in range(len(sectors))])
+            sector_clause = f"AND sp.sector IN ({placeholders})"
+            for i, s in enumerate(sectors):
+                params[f"sector_{i}"] = s
+
+        rows = db.execute(text(f"""
             WITH ranked AS (
                 SELECT
                     symbol, company, close_price, volume,
@@ -349,6 +382,12 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
                 FROM stock_prices
                 WHERE market_cap IS NOT NULL
                 ORDER BY symbol, date DESC
+            ),
+            sec AS (
+                SELECT DISTINCT ON (symbol) symbol, sector
+                FROM stock_prices
+                WHERE sector IS NOT NULL AND sector != ''
+                ORDER BY symbol, date DESC
             )
             SELECT
                 l.symbol,
@@ -358,18 +397,21 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
                 ROUND(a.avg_volume::numeric, 0)                                                      AS avg_volume,
                 ROUND(((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100)::numeric, 2) AS volume_surge,
                 ROUND(((l.price - p.prev_close) / NULLIF(p.prev_close,0) * 100)::numeric, 2)        AS price_change,
-                mc.market_cap
+                mc.market_cap,
+                sp.sector
             FROM latest l
-            JOIN prev    p  ON l.symbol = p.symbol
-            JOIN avg_vol a  ON l.symbol = a.symbol
-            JOIN mc    ON l.symbol = mc.symbol
+            JOIN prev    p   ON l.symbol = p.symbol
+            JOIN avg_vol a   ON l.symbol = a.symbol
+            JOIN mc          ON l.symbol = mc.symbol
+            JOIN sec sp      ON l.symbol = sp.symbol
             WHERE a.avg_volume >= 500000
               AND l.price >= 5
               AND ((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100) >= :threshold
               AND mc.market_cap >= 1000000000
+              {sector_clause}
             ORDER BY volume_surge DESC
             LIMIT :limit
-        """), {"threshold": min_volume_surge_pct, "limit": limit}).fetchall()
+        """), params).fetchall()
     except Exception as e:
         print(f"Error in get_top_stocks_from_db: {e}")
         return []
@@ -389,6 +431,7 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
                 "today_volume":       int(float(r[3])),
                 "avg_volume":         int(float(r[4])),
                 "volume_surge":       float(r[5]),
+                "sector":             str(r[8]) if r[8] else "",
             })
         except Exception as e:
             print(f"Row parse error {r[0]}: {e}")
@@ -405,7 +448,6 @@ def get_chart_data(symbol: str):
     """), {"symbol": symbol}).fetchall()
     db.close()
 
-# Reverse to get ascending order for chart
     rows = list(reversed(rows))
 
     if len(rows) >= 20:

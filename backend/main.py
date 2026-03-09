@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query
+from typing import List, Optional
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,7 @@ from app.services.stock_service import (
     get_top_stocks_from_db,
     get_ingest_progress,
     get_chart_data,
+    get_all_sectors,
 )
 from app.services.ai_service import get_ai_reason, get_brief_insight
 from database import Base, engine
@@ -50,20 +52,8 @@ def market_open_ingest():
 
 
 scheduler = BackgroundScheduler(timezone=ET)
-
-scheduler.add_job(
-    scheduled_ingest,
-    CronTrigger(minute="*/5"),
-    id="ingest_15min",
-    replace_existing=True,
-)
-
-scheduler.add_job(
-    market_open_ingest,
-    CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=ET),
-    id="market_open_ingest",
-    replace_existing=True,
-)
+scheduler.add_job(scheduled_ingest,    CronTrigger(minute="*/5"),                                          id="ingest_15min",        replace_existing=True)
+scheduler.add_job(market_open_ingest,  CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=ET), id="market_open_ingest",   replace_existing=True)
 
 
 @asynccontextmanager
@@ -93,12 +83,29 @@ def home():
     return {"message": "Welcome to the Stock Market Dashboard!"}
 
 
+@app.get("/sectors")
+def sectors():
+    """Return all distinct sectors available in DB."""
+    return get_all_sectors()
+
+
 @app.get("/stocks")
 def stocks_from_db(
-    threshold: float = Query(1.5),
-    limit: int = Query(20, ge=5, le=50),
+    threshold:  float         = Query(1.5),
+    limit:      int           = Query(50, ge=5, le=1000),
+    sectors:    List[str]     = Query(default=[]),
 ):
-    return get_top_stocks_from_db(min_volume_surge_pct=threshold, limit=limit)
+    """
+    Returns top stocks filtered by volume surge threshold and optional sectors.
+    sectors is a repeated query param: /stocks?sectors=Technology&sectors=Healthcare
+    limit defaults to 50 so sector filter applies across all meaningful data.
+    """
+    sector_filter = sectors if sectors else None
+    return get_top_stocks_from_db(
+        min_volume_surge_pct=threshold,
+        limit=limit,
+        sectors=sector_filter,
+    )
 
 
 @app.get("/top-stocks")
@@ -133,24 +140,17 @@ def reason(symbol: str, threshold: float = Query(1.5)):
 
 @app.get("/brief-insight/{symbol}")
 def brief_insight(
-    symbol: str,
-    price: float = Query(...),
-    price_change: float = Query(...),
-    volume_surge: float = Query(...),
+    symbol:             str,
+    price:              float = Query(...),
+    price_change:       float = Query(...),
+    volume_surge:       float = Query(...),
     market_cap_billion: float = Query(0.0),
 ):
-    """Returns a short 1-2 sentence AI insight + prediction for a stock card."""
     text = get_brief_insight(symbol, price, price_change, volume_surge, market_cap_billion)
     return {"symbol": symbol, "insight": text}
 
 
 @app.get("/scheduler-status")
 def scheduler_status():
-    jobs = []
-    for job in scheduler.get_jobs():
-        jobs.append({"id": job.id, "next_run": str(job.next_run_time)})
-    return {
-        "market_open": is_market_open(),
-        "scheduler_running": scheduler.running,
-        "jobs": jobs,
-    }
+    jobs = [{"id": job.id, "next_run": str(job.next_run_time)} for job in scheduler.get_jobs()]
+    return {"market_open": is_market_open(), "scheduler_running": scheduler.running, "jobs": jobs}
