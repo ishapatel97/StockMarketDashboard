@@ -13,7 +13,8 @@ import {
 import { Line } from "react-chartjs-2";
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale);
-
+const API = "https://your-backend-name.onrender.com"; //profuctions frontend URL
+//const API = "http://127.0.0.1:8000"; //local frontned URL
 function StockDashboard() {
 
   const [stocks, setStocks] = useState([]);
@@ -31,7 +32,7 @@ function StockDashboard() {
 
   const refreshStocks = () => {
     setLoadingStocks(true);
-    axios.get("http://127.0.0.1:8000/stocks", { params: { threshold, limit: displayCount } })
+    axios.get("${API}/stocks", { params: { threshold, limit: displayCount } })
       .then((res) => setStocks(res.data))
       .catch((err) => console.error(err))
       .finally(() => setLoadingStocks(false));
@@ -46,7 +47,7 @@ function StockDashboard() {
     try {
       const poll = async () => {
         try {
-          const p = await axios.get("http://127.0.0.1:8000/ingest-progress");
+          const p = await axios.get("${API}/ingest-progress");
           const prog = p.data || {};
           const {
             total_tickers = 0,
@@ -68,7 +69,7 @@ function StockDashboard() {
 
       // Start polling first to display 0/0 if needed
       intervalId = setInterval(poll, 1000);
-      await axios.post("http://127.0.0.1:8000/ingest-all");
+      await axios.post("${API}/ingest-all");
       // Final poll to capture completed numbers
       await poll();
     } catch (err) {
@@ -97,7 +98,7 @@ function StockDashboard() {
     setAiLoading(true);
     setAiError("");
     setAiData(null);
-    axios.get(`http://127.0.0.1:8000/reason/${selectedSymbol}`, { params: { threshold } })
+    axios.get(`${API}/reason/${selectedSymbol}`, { params: { threshold } })
       .then((res) => { if (!cancelled) setAiData(res.data); })
       .catch(() => { if (!cancelled) setAiError("Failed to get AI reason."); })
       .finally(() => { if (!cancelled) setAiLoading(false); });
@@ -105,7 +106,7 @@ function StockDashboard() {
   }, [isModalOpen, selectedSymbol, threshold]);
 
   const loadChart = (symbol) => {
-    axios.get(`http://127.0.0.1:8000/chart/${symbol}`)
+    axios.get(`${API}/chart/${symbol}`)
       .then((res) => {
         const dates = res.data.dates || [];
         const volumes = res.data.volumes || [];
