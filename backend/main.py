@@ -11,6 +11,7 @@ from app.services.stock_service import (
 )
 from app.services.ai_service import get_ai_reason
 import yfinance as yf
+from database import Base, engine
 
 app = FastAPI()
 
@@ -22,6 +23,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+Base.metadata.create_all(bind=engine)
 
 # Deprecated: old endpoint; kept for backward compatibility if needed
 @app.get("/top-stocks")
