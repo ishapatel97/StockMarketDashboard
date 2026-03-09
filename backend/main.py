@@ -25,6 +25,10 @@ app.add_middleware(
 )
 Base.metadata.create_all(bind=engine)
 
+@app.get("/")
+def home():
+    return {"message": "Welcome to the Stock Market Dashboard!"}
+
 # Deprecated: old endpoint; kept for backward compatibility if needed
 @app.get("/top-stocks")
 def top_stocks():
