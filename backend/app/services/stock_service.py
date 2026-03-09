@@ -29,7 +29,7 @@ _INGEST_PROGRESS = {
 _PROGRESS_LOCK = Lock()
 
 
-# ── Polygon helpers ───────────────────���────────────────────────────────────────
+# ── Polygon helpers ───────────────────────────────────────────────────────────
 
 def _polygon_get(path: str, params: dict = None) -> dict:
     """Make a GET request to Polygon.io and return the JSON body."""
@@ -379,37 +379,35 @@ def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
 
 
 def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
-    """TEMP: Return latest DB row per symbol without heavy calculations/filters."""
+    """
+    Compute real metrics (price_change, avg_volume, volume_surge) from DB data.
+    Returns stocks whose volume surge exceeds `min_volume_surge_pct`, sorted by
+    volume_surge descending.
+    """
     db = SessionLocal()
     try:
-        rows = db.execute(text("""
-            SELECT symbol, company, close_price AS price, volume AS today_volume, date
-            FROM (
-              SELECT symbol, company, close_price, volume, date,
-                     ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) rn
-              FROM stock_prices
-              WHERE close_price IS NOT NULL AND volume IS NOT NULL
-            ) t
-            WHERE rn = 1
-            ORDER BY date DESC
-            LIMIT :limit
-        """), {"limit": limit}).fetchall()
+        # Get symbols that have at least 21 rows (need 20-day avg + today)
+        symbols_rows = db.execute(text(
+            "SELECT symbol, COUNT(*) AS cnt FROM stock_prices "
+            "WHERE close_price IS NOT NULL AND volume IS NOT NULL "
+            "GROUP BY symbol HAVING COUNT(*) >= 21"
+        )).fetchall()
     finally:
         db.close()
 
+    if not symbols_rows:
+        return []
+
     results = []
-    for r in rows:
-        results.append({
-            "symbol":             r[0],
-            "company":            r[1] or "",
-            "price":              float(r[2]) if r[2] is not None else 0.0,
-            "today_volume":       int(r[3]) if r[3] is not None else 0,
-            "avg_volume":         0,
-            "volume_surge":       0.0,
-            "price_change":       0.0,
-            "market_cap_billion": 0.0,
-        })
-    return results
+    for sym_row in symbols_rows:
+        symbol = sym_row[0]
+        analysis = analyze_stock_from_db(symbol, min_volume_surge_pct=min_volume_surge_pct)
+        if analysis is not None:
+            results.append(analysis)
+
+    # Sort by volume_surge descending and apply limit
+    results.sort(key=lambda x: x["volume_surge"], reverse=True)
+    return results[:limit]
 
 
 def get_chart_data(symbol: str):
