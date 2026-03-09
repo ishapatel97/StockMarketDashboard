@@ -15,17 +15,15 @@ import { Line } from "react-chartjs-2";
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale);
 const API = "https://stockmarketdashboard-727w.onrender.com"; //productions frontend URL
 //const API = "http://127.0.0.1:8000"; //local frontned URL
-function StockDashboard() {
 
+function StockDashboard() {
   const [stocks, setStocks] = useState([]);
   const [displayCount, setDisplayCount] = useState(10);
   const [threshold, setThreshold] = useState(1.5);
   const [chartData, setChartData] = useState(null);
   const [selectedSymbol, setSelectedSymbol] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [loadingIngest, setLoadingIngest] = useState(false);
-  const [loadingStocks, setLoadingStocks] = useState(false);
-  const [statusMsg, setStatusMsg] = useState("");
+  const [loadingStocks, setLoadingStocks] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiData, setAiData] = useState(null);
@@ -38,60 +36,16 @@ function StockDashboard() {
       .finally(() => setLoadingStocks(false));
   };
 
-  const ingestBatch = async () => {
-    setLoadingIngest(true);
-    setStatusMsg("Starting full ingestion…");
-
-    // Start ingestion
-    let intervalId;
-    try {
-      const poll = async () => {
-        try {
-          const p = await axios.get(`${API}/ingest-progress`);
-          const prog = p.data || {};
-          const {
-            total_tickers = 0,
-            processed_tickers = 0,
-            rows_inserted = 0,
-            current_chunk = 0,
-            total_chunks = 0,
-            done = false,
-          } = prog;
-          setStatusMsg(`Processed ${processed_tickers}/${total_tickers} tickers, inserted ${rows_inserted} rows (chunk ${current_chunk}/${total_chunks})`);
-          if (done) {
-            clearInterval(intervalId);
-            setLoadingIngest(false);
-          }
-        } catch (e) {
-          // ignore polling errors
-        }
-      };
-
-      // Start polling first to display 0/0 if needed
-      intervalId = setInterval(poll, 1000);
-      await axios.post(`${API}/ingest-all`);
-      // Final poll to capture completed numbers
-      await poll();
-    } catch (err) {
-      console.error(err);
-      setStatusMsg("Error during ingestion");
-      if (intervalId) clearInterval(intervalId);
-      setLoadingIngest(false);
-    }
-  };
-
   useEffect(() => {
-    // Initial load from DB only
     refreshStocks();
   }, []);
 
-  // Refresh list in real time when threshold or displayCount changes
   useEffect(() => {
     refreshStocks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threshold, displayCount]);
 
-  // Auto-fetch AI summary when modal opens or when symbol/threshold changes
+  // Auto-fetch AI summary when modal opens
   useEffect(() => {
     if (!isModalOpen || !selectedSymbol) return;
     let cancelled = false;
@@ -152,118 +106,133 @@ function StockDashboard() {
           ]
         });
 
-        // Reset AI state for new modal open
         setAiLoading(true);
         setAiError("");
         setAiData(null);
-
         setSelectedSymbol(symbol);
         setIsModalOpen(true);
       })
       .catch((err) => console.error("Error loading chart:", err));
   };
 
+  const dataReady = !loadingStocks && stocks.length > 0;
+
   return (
     <div className="dashboard">
 
-      {/* HEADER WITH TITLE AND DROPDOWN */}
+      {/* LOADING OVERLAY */}
+      {loadingStocks && (
+        <div className="loading-overlay">
+          <div className="loading-popup">
+            <div className="spinner"></div>
+            <h2>Loading Stock Data</h2>
+            <p>Fetching the latest market data…</p>
+          </div>
+        </div>
+      )}
+
+      {/* HEADER */}
       <div className="header-section">
-        <h1>Stock Market Dashboard</h1>
+        <h1>📈 Stock Market Dashboard</h1>
 
         <div className="controls">
-          <button onClick={ingestBatch} disabled={loadingIngest}>
-            {loadingIngest ? 'Loading All…' : 'Load New Data'}
-          </button>
           <button onClick={refreshStocks} disabled={loadingStocks}>
-            {loadingStocks ? 'Refreshing…' : 'Refresh Stocks Data'}
+            {loadingStocks ? 'Refreshing…' : 'Refresh'}
           </button>
 
-          <label htmlFor="threshold" style={{ marginLeft: '12px' }}>Threshold %:</label>
-          <input
-            id="threshold"
-            type="number"
-            step="0.1"
-            min="0"
-            value={threshold}
-            onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
-            style={{ width: 90, padding: '8px', borderRadius: 6, border: '2px solid #2c3e50' }}
-          />
+          <div className="control-group">
+            <label htmlFor="threshold">Threshold %</label>
+            <input
+              id="threshold"
+              type="number"
+              step="0.1"
+              min="0"
+              value={threshold}
+              onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
+            />
+          </div>
 
-          <label htmlFor="recordCount" style={{ marginLeft: '12px' }}>Show Records:</label>
-          <select
-            id="recordCount"
-            value={displayCount}
-            onChange={(e) => setDisplayCount(Number(e.target.value))}
-          >
-            <option value={5}>5</option>
-            <option value={10}>10</option>
-            <option value={15}>15</option>
-            <option value={20}>20</option>
-          </select>
+          <div className="control-group">
+            <label htmlFor="recordCount">Records</label>
+            <select
+              id="recordCount"
+              value={displayCount}
+              onChange={(e) => setDisplayCount(Number(e.target.value))}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={20}>20</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {statusMsg && (
-        <div style={{ marginBottom: '10px', color: loadingIngest ? '#0a58ca' : '#666' }}>{statusMsg}</div>
+      {/* NO DATA STATE */}
+      {!loadingStocks && stocks.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-state-icon">📊</div>
+          <h2>No Stocks Found</h2>
+          <p>No stocks match the current threshold. Try lowering the threshold or refreshing.</p>
+        </div>
       )}
 
-
-      {/* CARDS FIRST */}
-
-      <div className="card-container">
-        {stocks.slice(0, displayCount).map((stock) => (
-          <div
-            key={stock.symbol}
-            className="stock-card"
-            onClick={() => loadChart(stock.symbol)}
-          >
-            <div className="stock-card-body">
-              <div className="stock-card-header">
-                <div>
-                  <h3>{stock.symbol}</h3>
-                  {stock.company && <div style={{ color: '#555', fontSize: 13, marginTop: 2 }}>{stock.company}</div>}
+      {/* CARDS — only show when data is ready */}
+      {dataReady && (
+        <div className="card-container">
+          {stocks.slice(0, displayCount).map((stock) => (
+            <div
+              key={stock.symbol}
+              className="stock-card"
+              onClick={() => loadChart(stock.symbol)}
+            >
+              <div className="stock-card-body">
+                <div className="stock-card-header">
+                  <div>
+                    <h3>{stock.symbol}</h3>
+                    {stock.company && <div className="stock-card-company">{stock.company}</div>}
+                  </div>
+                  <span className={stock.price_change > 0 ? "badge positive" : "badge negative"}>
+                    {stock.price_change > 0 ? '+' : ''}{stock.price_change}%
+                  </span>
                 </div>
-                <span className={stock.price_change > 0 ? "positive" : "negative"}>
-                  {stock.price_change}%
-                </span>
-              </div>
-              <div className="stock-card-grid">
-                <div className="row"><span>Price</span><strong>${stock.price}</strong></div>
-                <div className="row"><span>Today's Volume</span><strong>{stock.today_volume.toLocaleString()}</strong></div>
-                <div className="row"><span>Avg Volume (20d)</span><strong>{stock.avg_volume.toLocaleString()}</strong></div>
-                <div className="row"><span>Volume Surge</span><strong>{stock.volume_surge}%</strong></div>
-                <div className="row"><span>Market Cap (B)</span><strong>{stock.market_cap_billion}</strong></div>
+                <div className="stock-card-grid">
+                  <div className="row"><span>Price</span><strong>${stock.price}</strong></div>
+                  <div className="row"><span>Today's Volume</span><strong>{stock.today_volume.toLocaleString()}</strong></div>
+                  <div className="row"><span>Avg Volume (20d)</span><strong>{stock.avg_volume.toLocaleString()}</strong></div>
+                  <div className="row"><span>Volume Surge</span><strong className="surge-value">{stock.volume_surge}%</strong></div>
+                  <div className="row"><span>Market Cap (B)</span><strong>${stock.market_cap_billion}</strong></div>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
+      {/* CHART MODAL */}
       {isModalOpen && chartData && (
         <div className="modal-overlay" onClick={() => { setIsModalOpen(false); setAiData(null); setAiError(""); setAiLoading(false); }}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{selectedSymbol} - 20-Day Volume Trend</h3>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="close-btn" onClick={() => {
-                  setIsModalOpen(false);
-                  setAiData(null);
-                  setAiError("");
-                  setAiLoading(false);
-                }}>×</button>
-              </div>
+              <h3>{selectedSymbol} — 20-Day Volume Trend</h3>
+              <button className="close-btn" onClick={() => {
+                setIsModalOpen(false);
+                setAiData(null);
+                setAiError("");
+                setAiLoading(false);
+              }}>×</button>
             </div>
-            <div className="modal-body" style={{ overflowY: 'auto' }}>
-              <div style={{ height: 340 }}>
-                <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 14, height: 14, backgroundColor: '#1d4ed8', borderRadius: 3 }}></div>
-                        <span style={{ fontSize: 13, color: '#1d4ed8', fontWeight: 600 }}>Price</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 14, height: 14, backgroundColor: '#f59e0b', borderRadius: 3 }}></div>
-                        <span style={{ fontSize: 13, color: '#f59e0b', fontWeight: 600 }}>Volume</span>
-                    </div>
+            <div className="modal-body">
+              <div className="chart-wrapper">
+                <div className="chart-legend">
+                  <div className="legend-item">
+                    <div className="legend-swatch" style={{ backgroundColor: '#1d4ed8' }}></div>
+                    <span style={{ color: '#1d4ed8' }}>Price</span>
+                  </div>
+                  <div className="legend-item">
+                    <div className="legend-swatch" style={{ backgroundColor: '#f59e0b' }}></div>
+                    <span style={{ color: '#f59e0b' }}>Volume</span>
+                  </div>
                 </div>
                 <Line
                   data={chartData}
@@ -274,12 +243,15 @@ function StockDashboard() {
                       legend: { display: false },
                     },
                     scales: {
-                      x: { title: { display: true, text: "Date (MM-DD)" } },
+                      x: {
+                        title: { display: true, text: "Date (MM-DD)" },
+                        ticks: { maxRotation: 45, minRotation: 0, font: { size: 11 } }
+                      },
                       y: {
                         type: 'linear',
                         position: 'left',
                         title: { display: true, text: 'Price ($)' },
-                        ticks: { callback: (v) => `${v}` }
+                        ticks: { callback: (v) => `$${v}` }
                       },
                       y1: {
                         type: 'linear',
@@ -288,8 +260,8 @@ function StockDashboard() {
                         title: { display: true, text: 'Volume' },
                         ticks: {
                           callback: function(value) {
-                            if (value >= 1000000) return (value/1000000).toFixed(1) + 'M';
-                            if (value >= 1000) return (value/1000).toFixed(0) + 'K';
+                            if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                            if (value >= 1000) return (value / 1000).toFixed(0) + 'K';
                             return value;
                           }
                         }
@@ -299,29 +271,34 @@ function StockDashboard() {
                 />
               </div>
 
-              <div style={{ marginTop: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>AI Summary</h4>
-                {aiLoading && <div>Generating summary…</div>}
-                {aiError && <div style={{ color: '#dc2626' }}>{aiError}</div>}
+              <div className="ai-section">
+                <h4>AI Summary</h4>
+                {aiLoading && (
+                  <div className="ai-loading">
+                    <div className="spinner-small"></div>
+                    <span>Generating summary…</span>
+                  </div>
+                )}
+                {aiError && <div className="ai-error">{aiError}</div>}
                 {aiData && (
-                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{aiData.reason}</div>
+                  <div className="ai-reason">{aiData.reason}</div>
                 )}
               </div>
 
-              <div style={{ marginTop: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>Sources</h4>
+              <div className="sources-section">
+                <h4>Sources</h4>
                 {aiData && aiData.sources && aiData.sources.length > 0 ? (
-                  <ul style={{ paddingLeft: 16 }}>
+                  <ul className="sources-list">
                     {aiData.sources.map((s, i) => (
-                      <li key={i} style={{ marginBottom: 6 }}>
+                      <li key={i}>
                         <a href={s.url} target="_blank" rel="noreferrer">{s.title || s.url}</a>
-                        {s.source ? <span style={{ marginLeft: 6, color: '#666' }}>— {s.source}</span> : null}
-                        {s.publishedAt ? <span style={{ marginLeft: 6, color: '#999' }}>({s.publishedAt})</span> : null}
+                        {s.source && <span className="source-name">— {s.source}</span>}
+                        {s.publishedAt && <span className="source-date">({s.publishedAt})</span>}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <div style={{ color: '#666' }}>No sources yet. Click AI Explain to fetch recent news.</div>
+                  !aiLoading && <div className="no-sources">No sources yet.</div>
                 )}
               </div>
             </div>
@@ -329,61 +306,44 @@ function StockDashboard() {
         </div>
       )}
 
-
-      {/* TABLE BELOW */}
-
-      <h2 className="table-title">Stock Table</h2>
-
-      <table className="stock-table">
-
-        <thead>
-          <tr>
-            <th>Symbol</th>
-            <th>Company</th>
-            <th>Price</th>
-            <th>Change %</th>
-            <th>Today's Volume</th>
-            <th>Avg Volume (20d)</th>
-            <th>Market Cap (B)</th>
-            <th>Volume Surge %</th>
-          </tr>
-        </thead>
-
-        <tbody>
-
-          {stocks.slice(0, displayCount).map((stock) => (
-
-            <tr
-              key={stock.symbol}
-              onClick={() => loadChart(stock.symbol)}
-            >
-
-              <td>{stock.symbol}</td>
-
-              <td>{stock.company || '-'}</td>
-
-              <td>${stock.price}</td>
-
-              <td className={stock.price_change > 0 ? "positive" : "negative"}>
-                {stock.price_change}%
-              </td>
-
-              <td>{stock.today_volume.toLocaleString()}</td>
-
-              <td>{stock.avg_volume.toLocaleString()}</td>
-
-              <td>{stock.market_cap_billion}</td>
-
-              <td>{stock.volume_surge}%</td>
-
-            </tr>
-
-          ))}
-
-        </tbody>
-
-      </table>
-
+      {/* TABLE — only show when data is ready */}
+      {dataReady && (
+        <>
+          <h2 className="table-title">Stock Table</h2>
+          <div className="table-wrapper">
+            <table className="stock-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Company</th>
+                  <th>Price</th>
+                  <th>Change %</th>
+                  <th>Today's Vol</th>
+                  <th>Avg Vol (20d)</th>
+                  <th>Mkt Cap (B)</th>
+                  <th>Vol Surge %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stocks.slice(0, displayCount).map((stock) => (
+                  <tr key={stock.symbol} onClick={() => loadChart(stock.symbol)}>
+                    <td className="symbol-cell">{stock.symbol}</td>
+                    <td>{stock.company || '—'}</td>
+                    <td>${stock.price}</td>
+                    <td className={stock.price_change > 0 ? "positive" : "negative"}>
+                      {stock.price_change > 0 ? '+' : ''}{stock.price_change}%
+                    </td>
+                    <td>{stock.today_volume.toLocaleString()}</td>
+                    <td>{stock.avg_volume.toLocaleString()}</td>
+                    <td>${stock.market_cap_billion}</td>
+                    <td className="surge-value">{stock.volume_surge}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

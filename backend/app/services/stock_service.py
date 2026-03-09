@@ -203,11 +203,7 @@ def _chunk_list(items, size):
 # ── Ingestion ──────────────────────────────────────────────────────────────────
 
 def ingest_all_tickers_fast(chunk_size: int = 50, max_workers: int = 5):
-    """
-    Ingest all tickers using Polygon.io. Skips tickers that already have >= 20 rows.
-    Polygon free tier: 5 calls/min — workers and chunk size set conservatively.
-    Upgrade to Starter ($29/mo) for unlimited calls and much faster ingestion.
-    """
+
     all_tickers = load_tickers()
     print(f"Loaded {len(all_tickers)} tickers")
 
@@ -378,37 +374,6 @@ def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
         return None
 
 
-# def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
-#     """
-#     Compute real metrics (price_change, avg_volume, volume_surge) from DB data.
-#     Returns stocks whose volume surge exceeds `min_volume_surge_pct`, sorted by
-#     volume_surge descending.
-#     """
-#     db = SessionLocal()
-#     try:
-#         # Get symbols that have at least 21 rows (need 20-day avg + today)
-#         symbols_rows = db.execute(text(
-#             "SELECT symbol, COUNT(*) AS cnt FROM stock_prices "
-#             "WHERE close_price IS NOT NULL AND volume IS NOT NULL "
-#             "GROUP BY symbol HAVING COUNT(*) >= 21"
-#         )).fetchall()
-#     finally:
-#         db.close()
-
-#     if not symbols_rows:
-#         return []
-
-#     results = []
-#     for sym_row in symbols_rows:
-#         symbol = sym_row[0]
-#         analysis = analyze_stock_from_db(symbol, min_volume_surge_pct=min_volume_surge_pct)
-#         if analysis is not None:
-#             results.append(analysis)
-
-#     # Sort by volume_surge descending and apply limit
-#     results.sort(key=lambda x: x["volume_surge"], reverse=True)
-#     return results[:limit]
-
 def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
     db = SessionLocal()
     try:
@@ -473,12 +438,17 @@ def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
         except Exception as e:
             print(f"Row parse error {r[0]}: {e}")
             continue
+    # Read market cap from DB instead of API
+    db = SessionLocal()
     for r in results:
         try:
-            r["market_cap_billion"] = _get_market_cap(r["symbol"])
-            time.sleep(0.1)
+            mc_row = db.execute(text(
+                "SELECT market_cap FROM stock_prices WHERE symbol=:symbol AND market_cap IS NOT NULL ORDER BY date DESC LIMIT 1"
+            ), {"symbol": r["symbol"]}).fetchone()
+            r["market_cap_billion"] = round(mc_row[0] / 1_000_000_000, 2) if mc_row and mc_row[0] else 0.0
         except Exception:
             r["market_cap_billion"] = 0.0
+    db.close()
     return results
 
 def get_chart_data(symbol: str):
@@ -508,6 +478,29 @@ def get_chart_data(symbol: str):
 
     return {"symbol": symbol, "dates": dates, "prices": prices, "volumes": volumes}
 
+def backfill_market_cap():
+    """Fetch and store market cap for all symbols once."""
+    db = SessionLocal()
+    symbols = db.execute(text("SELECT DISTINCT symbol FROM stock_prices")).fetchall()
+    db.close()
+    symbols = [s[0] for s in symbols]
+    updated = 0
+    for sym in symbols:
+        try:
+            data = _polygon_get(f"/v3/reference/tickers/{sym}")
+            mc = data.get("results", {}).get("market_cap")
+            if mc:
+                db = SessionLocal()
+                db.execute(text(
+                    "UPDATE stock_prices SET market_cap=:mc WHERE symbol=:symbol"
+                ), {"mc": int(mc), "symbol": sym})
+                db.commit()
+                db.close()
+                updated += 1
+            time.sleep(0.5)  # respect rate limit
+        except Exception:
+            continue
+    return {"processed": len(symbols), "updated": updated}
 
 def backfill_company_missing():
     """Fill missing company names using Polygon ticker details."""
