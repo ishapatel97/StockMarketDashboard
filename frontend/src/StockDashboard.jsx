@@ -133,7 +133,7 @@ function StockDashboard() {
 
       {/* HEADER */}
       <div className="header-section">
-        <h1>📈 Stock Market Dashboard</h1>
+        <h1>Stock Market Dashboard</h1>
 
         <div className="controls">
           <button onClick={refreshStocks} disabled={loadingStocks}>

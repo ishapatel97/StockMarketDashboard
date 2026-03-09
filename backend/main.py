@@ -14,8 +14,6 @@ from app.services.stock_service import (
     ingest_all_tickers_fast,
     get_top_stocks_from_db,
     get_ingest_progress,
-    backfill_company_missing,
-    backfill_market_cap,
     get_chart_data,
 )
 from app.services.ai_service import get_ai_reason
@@ -133,14 +131,6 @@ def stocks_from_db(
 ):
     return get_top_stocks_from_db(min_volume_surge_pct=threshold, limit=limit)
 
-
-@app.post("/backfill-company")
-def backfill_company():
-    return backfill_company_missing()
-
-@app.post("/backfill-marketcap")
-def backfill_marketcap():
-    return backfill_market_cap()
 @app.get("/scheduler-status")
 def scheduler_status():
     """Check scheduler status and next run times."""
