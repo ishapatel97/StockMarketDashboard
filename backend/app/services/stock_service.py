@@ -378,37 +378,102 @@ def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
         return None
 
 
+# def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
+#     """
+#     Compute real metrics (price_change, avg_volume, volume_surge) from DB data.
+#     Returns stocks whose volume surge exceeds `min_volume_surge_pct`, sorted by
+#     volume_surge descending.
+#     """
+#     db = SessionLocal()
+#     try:
+#         # Get symbols that have at least 21 rows (need 20-day avg + today)
+#         symbols_rows = db.execute(text(
+#             "SELECT symbol, COUNT(*) AS cnt FROM stock_prices "
+#             "WHERE close_price IS NOT NULL AND volume IS NOT NULL "
+#             "GROUP BY symbol HAVING COUNT(*) >= 21"
+#         )).fetchall()
+#     finally:
+#         db.close()
+
+#     if not symbols_rows:
+#         return []
+
+#     results = []
+#     for sym_row in symbols_rows:
+#         symbol = sym_row[0]
+#         analysis = analyze_stock_from_db(symbol, min_volume_surge_pct=min_volume_surge_pct)
+#         if analysis is not None:
+#             results.append(analysis)
+
+#     # Sort by volume_surge descending and apply limit
+#     results.sort(key=lambda x: x["volume_surge"], reverse=True)
+#     return results[:limit]
+
 def get_top_stocks_from_db(min_volume_surge_pct: float = 1.5, limit: int = 10):
-    """
-    Compute real metrics (price_change, avg_volume, volume_surge) from DB data.
-    Returns stocks whose volume surge exceeds `min_volume_surge_pct`, sorted by
-    volume_surge descending.
-    """
     db = SessionLocal()
     try:
-        # Get symbols that have at least 21 rows (need 20-day avg + today)
-        symbols_rows = db.execute(text(
-            "SELECT symbol, COUNT(*) AS cnt FROM stock_prices "
-            "WHERE close_price IS NOT NULL AND volume IS NOT NULL "
-            "GROUP BY symbol HAVING COUNT(*) >= 21"
-        )).fetchall()
+        rows = db.execute(text("""
+            WITH ranked AS (
+                SELECT
+                    symbol, company, close_price, volume,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn,
+                    COUNT(*)     OVER (PARTITION BY symbol)                    AS total_rows
+                FROM stock_prices
+                WHERE close_price IS NOT NULL AND volume IS NOT NULL
+            ),
+            latest AS (
+                SELECT symbol, company, close_price AS price, volume AS today_volume
+                FROM ranked WHERE rn = 1 AND total_rows >= 21
+            ),
+            prev AS (
+                SELECT symbol, close_price AS prev_close
+                FROM ranked WHERE rn = 2
+            ),
+            avg_vol AS (
+                SELECT symbol, AVG(volume) AS avg_volume
+                FROM ranked WHERE rn BETWEEN 2 AND 21
+                GROUP BY symbol
+            )
+            SELECT
+                l.symbol,
+                l.company,
+                ROUND(l.price::numeric, 2) AS price,
+                l.today_volume,
+                ROUND(a.avg_volume::numeric, 0) AS avg_volume,
+                ROUND(((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100)::numeric, 2) AS volume_surge,
+                ROUND(((l.price - p.prev_close) / NULLIF(p.prev_close,0) * 100)::numeric, 2) AS price_change
+            FROM latest l
+            JOIN prev    p ON l.symbol = p.symbol
+            JOIN avg_vol a ON l.symbol = a.symbol
+            WHERE a.avg_volume >= 500000
+              AND l.price >= 5
+              AND ((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100) >= :threshold
+            ORDER BY volume_surge DESC
+            LIMIT :limit
+        """), {"threshold": min_volume_surge_pct, "limit": limit}).fetchall()
+    except Exception as e:
+        print(f"Error in get_top_stocks_from_db: {e}")
+        return []
     finally:
         db.close()
 
-    if not symbols_rows:
-        return []
-
     results = []
-    for sym_row in symbols_rows:
-        symbol = sym_row[0]
-        analysis = analyze_stock_from_db(symbol, min_volume_surge_pct=min_volume_surge_pct)
-        if analysis is not None:
-            results.append(analysis)
-
-    # Sort by volume_surge descending and apply limit
-    results.sort(key=lambda x: x["volume_surge"], reverse=True)
-    return results[:limit]
-
+    for r in rows:
+        try:
+            results.append({
+                "symbol":             str(r[0]),
+                "company":            str(r[1]) if r[1] else "",
+                "price":              float(r[2]),
+                "price_change":       float(r[6]),
+                "market_cap_billion": 0.0,
+                "today_volume":       int(float(r[3])),
+                "avg_volume":         int(float(r[4])),
+                "volume_surge":       float(r[5]),
+            })
+        except Exception as e:
+            print(f"Row parse error {r[0]}: {e}")
+            continue
+    return results
 
 def get_chart_data(symbol: str):
     """Fetch chart data from DB; fall back to Polygon if DB has < 20 rows."""
