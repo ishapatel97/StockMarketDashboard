@@ -49,20 +49,13 @@ function SectorDropdown({ allSectors, selectedSectors, onChange, onApply, hasCha
   }, []);
 
   const toggleSector = (sector) => {
-    if (selectedSectors.includes(sector)) {
-      onChange(selectedSectors.filter(s => s !== sector));
-    } else {
-      onChange([...selectedSectors, sector]);
-    }
+    onChange(selectedSectors.includes(sector)
+      ? selectedSectors.filter(s => s !== sector)
+      : [...selectedSectors, sector]
+    );
   };
 
-  const clearAll  = () => onChange([]);
-  const selectAll = () => onChange([...allSectors]);
-
-  const handleApplyClick = () => {
-    onApply();
-    setOpen(false);
-  };
+  const handleApplyClick = () => { onApply(); setOpen(false); };
 
   const label = selectedSectors.length === 0
     ? "All Sectors"
@@ -76,21 +69,18 @@ function SectorDropdown({ allSectors, selectedSectors, onChange, onApply, hasCha
         <span>{label}</span>
         <span className="sector-dropdown-arrow">{open ? "▲" : "▼"}</span>
       </button>
-
       {open && (
         <div className="sector-dropdown-menu">
           <div className="sector-dropdown-actions">
-            <button onClick={selectAll}>All</button>
-            <button onClick={clearAll}>Clear</button>
+            <button onClick={() => onChange([...allSectors])}>All</button>
+            <button onClick={() => onChange([])}>Clear</button>
           </div>
           <div className="sector-dropdown-list">
             {allSectors.map(sector => (
               <label key={sector} className="sector-option">
-                <input
-                  type="checkbox"
+                <input type="checkbox"
                   checked={selectedSectors.includes(sector)}
-                  onChange={() => toggleSector(sector)}
-                />
+                  onChange={() => toggleSector(sector)} />
                 <span className="sector-dot" style={{ backgroundColor: getSectorColor(sector) }} />
                 {sector}
               </label>
@@ -99,8 +89,7 @@ function SectorDropdown({ allSectors, selectedSectors, onChange, onApply, hasCha
           <div className="sector-dropdown-footer">
             <button
               className={`sector-apply-btn ${hasChanges ? "sector-apply-btn-active" : ""}`}
-              onClick={handleApplyClick}
-            >
+              onClick={handleApplyClick}>
               Apply
             </button>
           </div>
@@ -110,7 +99,7 @@ function SectorDropdown({ allSectors, selectedSectors, onChange, onApply, hasCha
   );
 }
 
-// ── Sort dropdown (single-select with radio buttons) ──────────────────────
+// ── Sort dropdown ─────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
   { key: "symbol",             label: "Symbol" },
   { key: "price",              label: "Price" },
@@ -133,21 +122,6 @@ function SortDropdown({ sortColumn, sortDirection, onSortChange }) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const handleSelect = (key) => {
-    onSortChange(key, sortDirection);
-  };
-
-  const handleToggleDirection = (e) => {
-    e.stopPropagation();
-    const newDir = sortDirection === "asc" ? "desc" : "asc";
-    onSortChange(sortColumn, newDir);
-  };
-
-  const handleClear = () => {
-    onSortChange(null, "asc");
-    setOpen(false);
-  };
-
   const activeOption = SORT_OPTIONS.find(o => o.key === sortColumn);
   const label = activeOption
     ? `${activeOption.label} ${sortDirection === "asc" ? "↑" : "↓"}`
@@ -159,47 +133,28 @@ function SortDropdown({ sortColumn, sortDirection, onSortChange }) {
         <span>{label}</span>
         <span className="sort-dropdown-arrow">{open ? "▲" : "▼"}</span>
       </button>
-
       {open && (
         <div className="sort-dropdown-menu">
           <div className="sort-dropdown-header">
-            <span>Sort By</span>
-            <button className="sort-clear-btn" onClick={handleClear}>Clear</button>
+            {sortColumn && (
+              <button className="sort-direction-btn" onClick={(e) => {
+                e.stopPropagation();
+                onSortChange(sortColumn, sortDirection === "asc" ? "desc" : "asc");
+              }}>
+                {sortDirection === "asc" ? "↑ Ascending" : "↓ Descending"}
+              </button>
+            )}
+            <button className="sort-clear-btn" onClick={() => { onSortChange(null, "asc"); setOpen(false); }}>Clear</button>
           </div>
-
-          {/* ASC / DESC toggle */}
-          <div className="sort-direction-toggle">
-            <button
-              className={`sort-dir-btn ${sortDirection === "asc" ? "sort-dir-btn-active" : ""}`}
-              onClick={() => onSortChange(sortColumn, "asc")}
-            >
-              ↑ Ascending
-            </button>
-            <button
-              className={`sort-dir-btn ${sortDirection === "desc" ? "sort-dir-btn-active" : ""}`}
-              onClick={() => onSortChange(sortColumn, "desc")}
-            >
-              ↓ Descending
-            </button>
-          </div>
-
           <div className="sort-dropdown-list">
-            {SORT_OPTIONS.map(opt => {
-              const isActive = sortColumn === opt.key;
-              return (
-                <label key={opt.key}
-                  className={`sort-option ${isActive ? "sort-option-active" : ""}`}
-                  onClick={() => handleSelect(opt.key)}>
-                  <input
-                    type="radio"
-                    name="sort-column"
-                    checked={isActive}
-                    readOnly
-                  />
-                  <span className="sort-option-label">{opt.label}</span>
-                </label>
-              );
-            })}
+            {SORT_OPTIONS.map(opt => (
+              <label key={opt.key}
+                className={`sort-option ${sortColumn === opt.key ? "sort-option-active" : ""}`}
+                onClick={() => onSortChange(opt.key, sortDirection)}>
+                <input type="radio" name="sort-column" checked={sortColumn === opt.key} readOnly />
+                <span className="sort-option-label">{opt.label}</span>
+              </label>
+            ))}
           </div>
         </div>
       )}
@@ -207,43 +162,24 @@ function SortDropdown({ sortColumn, sortDirection, onSortChange }) {
   );
 }
 
-// ── Stock card ────────────────────────────────────────────────────────────────
-function StockCard({ stock, onClick, index }) {
-  const [insight, setInsight]               = useState("");
-  const [insightLoading, setInsightLoading] = useState(false);
-  const [insightFetched, setInsightFetched] = useState(false);
-
-  useEffect(() => {
-    if (insightFetched) return;
-    const delay = index * 2000;
-    const timer = setTimeout(() => {
-      setInsightLoading(true);
-      axios.get(`${API}/brief-insight/${stock.symbol}`, {
-        params: {
-          price:              stock.price,
-          price_change:       stock.price_change,
-          volume_surge:       stock.volume_surge,
-          market_cap_billion: stock.market_cap_billion,
-        }
-      })
-        .then((res) => setInsight(res.data.insight || ""))
-        .catch(() => setInsight(""))
-        .finally(() => { setInsightLoading(false); setInsightFetched(true); });
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [stock.symbol, insightFetched]);
+// ── Stock card — insight & price_change come directly from calculated_stocks ──
+function StockCard({ stock, onClick }) {
+  const isPositive = stock.price_change > 0;
+  const isNegative = stock.price_change < 0;
 
   return (
     <div className="stock-card" onClick={onClick}>
       <div className="stock-card-body">
+
+        {/* Header: symbol + change badge + sector */}
         <div className="stock-card-header">
           <div>
             <h3>{stock.symbol}</h3>
             {stock.company && <div className="stock-card-company">{stock.company}</div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
-            <span className={stock.price_change > 0 ? "badge positive" : "badge negative"}>
-              {stock.price_change > 0 ? '+' : ''}{stock.price_change}%
+            <span className={isPositive ? "badge positive" : isNegative ? "badge negative" : "badge neutral"}>
+              {isPositive ? "+" : ""}{stock.price_change}%
             </span>
             {stock.sector && (
               <span className="sector-badge" style={{ backgroundColor: getSectorColor(stock.sector) }}>
@@ -253,26 +189,27 @@ function StockCard({ stock, onClick, index }) {
           </div>
         </div>
 
+        {/* Metrics grid */}
         <div className="stock-card-grid">
-          <div className="row"><span>Price</span><strong>${stock.price}</strong></div>
+          <div className="row"><span>Price</span><strong>${Number(stock.price).toFixed(2)}</strong></div>
           <div className="row"><span>Today's Volume</span><strong>{stock.today_volume.toLocaleString()}</strong></div>
           <div className="row"><span>Avg Volume (20d)</span><strong>{stock.avg_volume.toLocaleString()}</strong></div>
-          <div className="row"><span>Volume Surge</span><strong className="surge-value">{stock.volume_surge}%</strong></div>
-          <div className="row"><span>Market Cap (B)</span><strong>${stock.market_cap_billion}</strong></div>
+          <div className="row">
+            <span>Volume Surge</span>
+            <strong className="surge-value">{stock.volume_surge}%</strong>
+          </div>
+          <div className="row"><span>Market Cap (B)</span><strong>${stock.market_cap_billion}B</strong></div>
         </div>
 
-        <div className="card-insight">
-          {insightLoading ? (
-            <div className="card-insight-loading">
-              <div className="spinner-tiny"></div>
-              <span>Generating insight…</span>
-            </div>
-          ) : insight ? (
+        {/* AI insight pre-loaded from calculated_stocks — no extra API call */}
+        {stock.stock_insight && (
+          <div className="card-insight">
             <div className="card-insight-text">
-              {insight}
+              {stock.stock_insight}
             </div>
-          ) : null}
-        </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
@@ -280,67 +217,56 @@ function StockCard({ stock, onClick, index }) {
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
 function StockDashboard() {
-  const [stocks, setStocks]                     = useState([]);
-  const [allSectors, setAllSectors]             = useState([]);
-  // pendingSectors = what user is selecting in dropdown (not yet applied)
-  const [pendingSectors, setPendingSectors]     = useState([]);
-  // appliedSectors = what was last applied via Apply button
-  const [appliedSectors, setAppliedSectors]     = useState([]);
-  const [displayCount, setDisplayCount]         = useState(10);
-  const [threshold, setThreshold]               = useState(1.5);
-  const [chartData, setChartData]               = useState(null);
-  const [selectedSymbol, setSelectedSymbol]     = useState(null);
-  const [isModalOpen, setIsModalOpen]           = useState(false);
-  const [loadingStocks, setLoadingStocks]       = useState(true);
-  const [aiLoading, setAiLoading]               = useState(false);
-  const [aiError, setAiError]                   = useState("");
-  const [aiData, setAiData]                     = useState(null);
-  const [sortColumn, setSortColumn]             = useState(null);
-  const [sortDirection, setSortDirection]        = useState("asc");
+  const [stocks, setStocks]                 = useState([]);
+  const [allSectors, setAllSectors]         = useState([]);
+  const [pendingSectors, setPendingSectors] = useState([]);   // dropdown selection
+  const [appliedSectors, setAppliedSectors] = useState([]);   // applied via Apply button
+  const [displayCount, setDisplayCount]     = useState(10);
+  const [threshold, setThreshold]           = useState(1.5);
+  const [chartData, setChartData]           = useState(null);
+  const [selectedSymbol, setSelectedSymbol] = useState(null);
+  const [isModalOpen, setIsModalOpen]       = useState(false);
+  const [loadingStocks, setLoadingStocks]   = useState(true);
+  const [aiLoading, setAiLoading]           = useState(false);
+  const [aiError, setAiError]               = useState("");
+  const [aiData, setAiData]                 = useState(null);
+  const [sortColumn, setSortColumn]         = useState(null);
+  const [sortDirection, setSortDirection]   = useState("asc");
+  const [insights, setInsights]             = useState({});   // { symbol: "insight text" }
+  const insightQueueRef = useRef(null);                       // to cancel pending fetches
 
-  // Load sectors from DB once on mount
+  // Load sectors once on mount
   useEffect(() => {
     axios.get(`${API}/sectors`)
       .then(res => setAllSectors(res.data || []))
       .catch(() => {});
   }, []);
 
-  // Fetch stocks — only re-runs when threshold or appliedSectors changes
-  // (NOT pendingSectors — dropdown changes don't trigger refresh)
-  const fetchStocks = useCallback((sectorsToApply) => {
+  // Fetch ALL stocks once on mount (threshold=0 to get everything, filter client-side)
+  const fetchStocks = useCallback(() => {
     setLoadingStocks(true);
-    const searchParams = new URLSearchParams();
-    searchParams.append("threshold", threshold);
-    searchParams.append("limit", 500); // fetch all matching, slice in frontend
-    sectorsToApply.forEach(s => searchParams.append("sectors", s));
-
-    axios.get(`${API}/stocks?${searchParams.toString()}`)
-      .then((res) => setStocks(res.data))
-      .catch((err) => console.error(err))
+    axios.get(`${API}/stocks?threshold=0&limit=500`)
+      .then(res => setStocks(res.data || []))
+      .catch(err => console.error("fetchStocks error:", err))
       .finally(() => setLoadingStocks(false));
-  }, [threshold]);
+  }, []);
 
-  // Initial load and threshold change
+  // Fetch once on mount only — all filtering is client-side
   useEffect(() => {
-    fetchStocks(appliedSectors);
-  }, [threshold]); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchStocks();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Apply button handler — applies sector selection and refreshes
+  // Apply sectors — client-side only, no API call
   const handleApply = () => {
     setAppliedSectors([...pendingSectors]);
-    fetchStocks(pendingSectors);
   };
 
-  // Refresh button — re-fetches with currently applied sectors
-  const handleRefresh = () => {
-    fetchStocks(appliedSectors);
-  };
+  const handleRefresh = () => fetchStocks();
 
-  // Check if pending differs from applied (to highlight Apply button)
   const hasUnappliedChanges =
-    JSON.stringify(pendingSectors.sort()) !== JSON.stringify(appliedSectors.sort());
+    JSON.stringify([...pendingSectors].sort()) !== JSON.stringify([...appliedSectors].sort());
 
-  // Auto-fetch full AI reason when modal opens
+  // Full AI summary when modal opens (uses /reason endpoint, includes news)
   useEffect(() => {
     if (!isModalOpen || !selectedSymbol) return;
     let cancelled = false;
@@ -348,7 +274,7 @@ function StockDashboard() {
     setAiError("");
     setAiData(null);
     axios.get(`${API}/reason/${selectedSymbol}`, { params: { threshold } })
-      .then((res) => { if (!cancelled) setAiData(res.data); })
+      .then(res => { if (!cancelled) setAiData(res.data); })
       .catch(() => { if (!cancelled) setAiError("Failed to get AI reason."); })
       .finally(() => { if (!cancelled) setAiLoading(false); });
     return () => { cancelled = true; };
@@ -356,38 +282,34 @@ function StockDashboard() {
 
   const loadChart = (symbol) => {
     axios.get(`${API}/chart/${symbol}`)
-      .then((res) => {
-        const dates = res.data.dates || [];
-        const formattedDates = dates.map((date) => {
+      .then(res => {
+        const dates = (res.data.dates || []).map(date => {
           const d = new Date(date);
-          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         });
         setChartData({
-          labels: formattedDates,
+          labels: dates,
           datasets: [
             {
-              type: 'line', label: 'Price (Close)',
+              type: "line", label: "Price (Close)",
               data: (res.data.prices || []).map(p => parseFloat(p.toFixed(2))),
-              borderColor: '#1d4ed8', backgroundColor: 'rgba(29,78,216,0.25)',
-              yAxisID: 'y', borderWidth: 2, tension: 0.3, fill: true,
-              pointRadius: 2, pointBackgroundColor: '#1d4ed8',
+              borderColor: "#1d4ed8", backgroundColor: "rgba(29,78,216,0.25)",
+              yAxisID: "y", borderWidth: 2, tension: 0.3, fill: true,
+              pointRadius: 2, pointBackgroundColor: "#1d4ed8",
             },
             {
-              type: 'line', label: 'Volume',
+              type: "line", label: "Volume",
               data: res.data.volumes || [],
-              borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.25)',
-              yAxisID: 'y1', borderWidth: 2, tension: 0.3, fill: true,
-              pointRadius: 2, pointBackgroundColor: '#f59e0b',
-            }
-          ]
+              borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.25)",
+              yAxisID: "y1", borderWidth: 2, tension: 0.3, fill: true,
+              pointRadius: 2, pointBackgroundColor: "#f59e0b",
+            },
+          ],
         });
-        setAiLoading(true);
-        setAiError("");
-        setAiData(null);
         setSelectedSymbol(symbol);
         setIsModalOpen(true);
       })
-      .catch((err) => console.error("Error loading chart:", err));
+      .catch(err => console.error("loadChart error:", err));
   };
 
   const closeModal = () => {
@@ -397,44 +319,87 @@ function StockDashboard() {
     setAiLoading(false);
   };
 
-  // ── Sorting logic ──────────────────────────────────────────────────────────
-  const handleSortChange = (column, direction) => {
-    setSortColumn(column);
-    setSortDirection(direction);
-  };
-
-  // Slice first, then sort the visible slice
-  const sliced = stocks.slice(0, displayCount);
+  // Client-side pipeline: filter by threshold + sector → slice → sort
+  const filtered = stocks
+    .filter(s => s.volume_surge >= threshold)
+    .filter(s => appliedSectors.length === 0 || appliedSectors.includes(s.sector));
+  const sliced = filtered.slice(0, displayCount);
   const visibleStocks = sortColumn
     ? [...sliced].sort((a, b) => {
-        let valA = a[sortColumn];
-        let valB = b[sortColumn];
-        // For symbol, do string compare
+        let valA = a[sortColumn], valB = b[sortColumn];
         if (sortColumn === "symbol") {
-          valA = (valA || "").toString().toLowerCase();
-          valB = (valB || "").toString().toLowerCase();
-          return sortDirection === "asc"
-            ? valA.localeCompare(valB)
-            : valB.localeCompare(valA);
+          valA = (valA || "").toLowerCase();
+          valB = (valB || "").toLowerCase();
+          return sortDirection === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
         }
-        // Numeric compare for everything else
         valA = Number(valA) || 0;
         valB = Number(valB) || 0;
         return sortDirection === "asc" ? valA - valB : valB - valA;
       })
     : sliced;
 
+  // Lazy-fetch AI insights for visible stocks (one at a time, 2.5s delay to avoid Groq rate limit)
+  useEffect(() => {
+    // Cancel any previous queue
+    if (insightQueueRef.current) {
+      insightQueueRef.current.cancelled = true;
+    }
+
+    const needInsight = visibleStocks.filter(s => !s.stock_insight && !insights[s.symbol]);
+    if (needInsight.length === 0) return;
+
+    const queue = { cancelled: false };
+    insightQueueRef.current = queue;
+
+    (async () => {
+      for (const stock of needInsight) {
+        if (queue.cancelled) return;
+        try {
+          const params = new URLSearchParams({
+            price: stock.price,
+            price_change: stock.price_change,
+            volume_surge: stock.volume_surge,
+            market_cap_billion: stock.market_cap_billion,
+          });
+          const res = await axios.get(`${API}/insight/${stock.symbol}?${params}`);
+          if (queue.cancelled) return;
+          // Stop fetching if Groq daily limit is hit
+          if (res.data?.rate_limited) {
+            console.warn("AI daily limit reached — stopping insight fetches");
+            return;
+          }
+          if (res.data?.insight) {
+            setInsights(prev => ({ ...prev, [stock.symbol]: res.data.insight }));
+          }
+        } catch (err) {
+          console.warn(`Insight fetch failed for ${stock.symbol}:`, err?.message || err);
+        }
+        // Wait 2.5s between requests to stay under Groq rate limit (~30/min)
+        await new Promise(r => setTimeout(r, 2500));
+      }
+    })();
+
+    return () => { queue.cancelled = true; };
+  }, [visibleStocks.map(s => s.symbol).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Merge lazy insights into visible stocks for rendering
+  const visibleWithInsights = visibleStocks.map(s => ({
+    ...s,
+    stock_insight: s.stock_insight || insights[s.symbol] || "",
+  }));
+
   const dataReady = !loadingStocks && stocks.length > 0;
 
   return (
     <div className="dashboard">
 
+      {/* Loading overlay */}
       {loadingStocks && (
         <div className="loading-overlay">
           <div className="loading-popup">
             <div className="spinner"></div>
             <h2>Loading Stock Data</h2>
-            <p>Fetching the latest market data…</p>
+            <p>Fetching pre-calculated market data…</p>
           </div>
         </div>
       )}
@@ -445,21 +410,19 @@ function StockDashboard() {
         <div className="controls">
 
           <button onClick={handleRefresh} disabled={loadingStocks}>
-            {loadingStocks ? 'Refreshing…' : 'Refresh'}
+            {loadingStocks ? "Refreshing…" : "Refresh"}
           </button>
 
           <div className="control-group">
             <label htmlFor="threshold">Threshold %</label>
-            <input
-              id="threshold" type="number" step="0.1" min="0" value={threshold}
-              onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
-            />
+            <input id="threshold" type="number" step="0.1" min="0" value={threshold}
+              onChange={e => setThreshold(parseFloat(e.target.value) || 0)} />
           </div>
 
           <div className="control-group">
             <label htmlFor="recordCount">Records</label>
             <select id="recordCount" value={displayCount}
-              onChange={(e) => setDisplayCount(Number(e.target.value))}>
+              onChange={e => setDisplayCount(Number(e.target.value))}>
               <option value={5}>5</option>
               <option value={10}>10</option>
               <option value={15}>15</option>
@@ -484,13 +447,13 @@ function StockDashboard() {
             <SortDropdown
               sortColumn={sortColumn}
               sortDirection={sortDirection}
-              onSortChange={handleSortChange}
+              onSortChange={(col, dir) => { setSortColumn(col); setSortDirection(dir); }}
             />
           </div>
 
         </div>
 
-        {/* Applied sector tags */}
+        {/* Active sector filter tags */}
         {appliedSectors.length > 0 && (
           <div className="active-sector-tags">
             <span className="active-filter-label">Filtered by:</span>
@@ -502,33 +465,36 @@ function StockDashboard() {
                   const updated = appliedSectors.filter(x => x !== s);
                   setAppliedSectors(updated);
                   setPendingSectors(updated);
-                  fetchStocks(updated);
                 }}>×</button>
               </span>
             ))}
           </div>
         )}
 
-        {!loadingStocks && (
+        {!loadingStocks && stocks.length > 0 && (
           <div className="result-count">
+           
           </div>
         )}
       </div>
 
-      {/* NO DATA STATE */}
+      {/* No data state */}
       {!loadingStocks && stocks.length === 0 && (
         <div className="empty-state">
           <div className="empty-state-icon">📊</div>
           <h2>No Stocks Found</h2>
           <p>No stocks match the current filters. Try lowering the threshold or selecting different sectors.</p>
+          <p style={{ fontSize: "0.85rem", color: "#9ca3af", marginTop: "8px" }}>
+            Note: Data is pre-calculated every 10 hours. If the table is empty, trigger a manual refresh via POST /refresh-summary.
+          </p>
         </div>
       )}
 
       {/* CARDS */}
       {dataReady && (
         <div className="card-container">
-          {visibleStocks.map((stock, index) => (
-            <StockCard key={stock.symbol} stock={stock} index={index} onClick={() => loadChart(stock.symbol)} />
+          {visibleWithInsights.map(stock => (
+            <StockCard key={stock.symbol} stock={stock} onClick={() => loadChart(stock.symbol)} />
           ))}
         </div>
       )}
@@ -536,7 +502,7 @@ function StockDashboard() {
       {/* CHART MODAL */}
       {isModalOpen && chartData && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{selectedSymbol} — 20-Day Volume Trend</h3>
               <button className="close-btn" onClick={closeModal}>×</button>
@@ -545,12 +511,12 @@ function StockDashboard() {
               <div className="chart-wrapper">
                 <div className="chart-legend">
                   <div className="legend-item">
-                    <div className="legend-swatch" style={{ backgroundColor: '#1d4ed8' }}></div>
-                    <span style={{ color: '#1d4ed8' }}>Price</span>
+                    <div className="legend-swatch" style={{ backgroundColor: "#1d4ed8" }}></div>
+                    <span style={{ color: "#1d4ed8" }}>Price</span>
                   </div>
                   <div className="legend-item">
-                    <div className="legend-swatch" style={{ backgroundColor: '#f59e0b' }}></div>
-                    <span style={{ color: '#f59e0b' }}>Volume</span>
+                    <div className="legend-swatch" style={{ backgroundColor: "#f59e0b" }}></div>
+                    <span style={{ color: "#f59e0b" }}>Volume</span>
                   </div>
                 </div>
                 <Line data={chartData} options={{
@@ -558,11 +524,11 @@ function StockDashboard() {
                   plugins: { legend: { display: false } },
                   scales: {
                     x: { title: { display: true, text: "Date (MM-DD)" }, ticks: { maxRotation: 45, minRotation: 0, font: { size: 11 } } },
-                    y: { type: 'linear', position: 'left', title: { display: true, text: 'Price ($)' }, ticks: { callback: (v) => `$${v}` } },
+                    y: { type: "linear", position: "left", title: { display: true, text: "Price ($)" }, ticks: { callback: v => `$${v}` } },
                     y1: {
-                      type: 'linear', position: 'right', grid: { drawOnChartArea: false },
-                      title: { display: true, text: 'Volume' },
-                      ticks: { callback: (v) => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v }
+                      type: "linear", position: "right", grid: { drawOnChartArea: false },
+                      title: { display: true, text: "Volume" },
+                      ticks: { callback: v => v >= 1000000 ? (v / 1000000).toFixed(1) + "M" : v >= 1000 ? (v / 1000).toFixed(0) + "K" : v }
                     }
                   }
                 }} />
@@ -570,8 +536,8 @@ function StockDashboard() {
               <div className="ai-section">
                 <h4>AI Summary</h4>
                 {aiLoading && <div className="ai-loading"><div className="spinner-small"></div><span>Generating summary…</span></div>}
-                {aiError && <div className="ai-error">{aiError}</div>}
-                {aiData && <div className="ai-reason">{aiData.reason}</div>}
+                {aiError  && <div className="ai-error">{aiError}</div>}
+                {aiData   && <div className="ai-reason">{aiData.reason}</div>}
               </div>
               <div className="sources-section">
                 <h4>Sources</h4>
@@ -580,12 +546,12 @@ function StockDashboard() {
                     {aiData.sources.map((s, i) => (
                       <li key={i}>
                         <a href={s.url} target="_blank" rel="noreferrer">{s.title || s.url}</a>
-                        {s.source && <span className="source-name">— {s.source}</span>}
-                        {s.publishedAt && <span className="source-date">({s.publishedAt})</span>}
+                        {s.source      && <span className="source-name"> — {s.source}</span>}
+                        {s.publishedAt && <span className="source-date"> ({s.publishedAt})</span>}
                       </li>
                     ))}
                   </ul>
-                ) : (!aiLoading && <div className="no-sources">No sources yet.</div>)}
+                ) : (!aiLoading && <div className="no-sources">No sources available.</div>)}
               </div>
             </div>
           </div>
@@ -607,34 +573,37 @@ function StockDashboard() {
                 <th>Avg Vol (20d)</th>
                 <th>Mkt Cap (B)</th>
                 <th>Vol Surge %</th>
+                <th>AI Insight</th>
               </tr>
             </thead>
             <tbody>
-              {visibleStocks.map((stock) => (
+              {visibleWithInsights.map(stock => (
                 <tr key={stock.symbol} onClick={() => loadChart(stock.symbol)}>
                   <td className="symbol-cell">{stock.symbol}</td>
-                  <td>{stock.company || '—'}</td>
+                  <td>{stock.company || "—"}</td>
                   <td>
                     {stock.sector ? (
                       <span className="sector-badge" style={{ backgroundColor: getSectorColor(stock.sector) }}>
                         {stock.sector}
                       </span>
-                    ) : '—'}
+                    ) : "—"}
                   </td>
-                  <td>${stock.price}</td>
-                  <td className={stock.price_change > 0 ? "positive" : "negative"}>
-                    {stock.price_change > 0 ? '+' : ''}{stock.price_change}%
+                  <td>${Number(stock.price).toFixed(2)}</td>
+                  <td className={stock.price_change > 0 ? "positive" : stock.price_change < 0 ? "negative" : ""}>
+                    {stock.price_change > 0 ? "+" : ""}{stock.price_change}%
                   </td>
                   <td>{stock.today_volume.toLocaleString()}</td>
                   <td>{stock.avg_volume.toLocaleString()}</td>
-                  <td>${stock.market_cap_billion}</td>
+                  <td>${stock.market_cap_billion}B</td>
                   <td className="surge-value">{stock.volume_surge}%</td>
+                  <td className="insight-cell">{stock.stock_insight || "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
     </div>
   );
 }

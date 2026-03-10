@@ -36,12 +36,26 @@ def _polygon_get(path: str, params: dict = None) -> dict:
     return resp.json()
 
 
-def _get_company_for_symbol(symbol: str) -> str:
+def _get_ticker_details(symbol: str) -> dict:
+    """
+    Fetch company name, market_cap, and sector from Polygon Ticker Details.
+    Returns dict with keys: company, market_cap, sector.
+    """
     try:
         data = _polygon_get(f"/v3/reference/tickers/{symbol}")
-        return data.get("results", {}).get("name", "")
+        results = data.get("results", {})
+        return {
+            "company":    results.get("name") or "",
+            "market_cap": results.get("market_cap"),  # can be None
+            "sector":     results.get("sic_description") or "",
+        }
     except Exception:
-        return ""
+        return {"company": "", "market_cap": None, "sector": ""}
+
+
+def _get_company_for_symbol(symbol: str) -> str:
+    """Legacy wrapper — returns just the company name."""
+    return _get_ticker_details(symbol).get("company", "")
 
 
 def _get_ohlcv(symbol: str, days: int = 60) -> pd.DataFrame:
@@ -93,20 +107,35 @@ def _backfill_company_symbol(db, symbol: str, company: str):
 
 
 def _bulk_insert_rows(rows: list) -> int:
+    """Insert price rows. Supports both old format (no market_cap/sector) and new format."""
     if not rows:
         return 0
     db = SessionLocal()
     try:
-        db.execute(text("""
-            INSERT INTO stock_prices(symbol, date, close_price, volume, company)
-            VALUES(:symbol, :date, :price, :volume, :company)
-            ON CONFLICT(symbol, date) DO NOTHING
-        """), rows)
-        symbols = {r["symbol"] for r in rows if r.get("company")}
-        for sym in symbols:
-            comp = next((r["company"] for r in rows if r["symbol"] == sym and r.get("company")), "")
-            if comp:
-                _backfill_company_symbol(db, sym, comp)
+        # Check if rows have market_cap/sector (new format)
+        has_metadata = "market_cap" in rows[0]
+        if has_metadata:
+            db.execute(text("""
+                INSERT INTO stock_prices(symbol, date, close_price, volume, company, market_cap, sector)
+                VALUES(:symbol, :date, :price, :volume, :company, :market_cap, :sector)
+                ON CONFLICT(symbol, date) DO UPDATE SET
+                    close_price = EXCLUDED.close_price,
+                    volume      = EXCLUDED.volume,
+                    company     = COALESCE(NULLIF(EXCLUDED.company, ''), stock_prices.company),
+                    market_cap  = COALESCE(EXCLUDED.market_cap, stock_prices.market_cap),
+                    sector      = COALESCE(NULLIF(EXCLUDED.sector, ''), stock_prices.sector)
+            """), rows)
+        else:
+            db.execute(text("""
+                INSERT INTO stock_prices(symbol, date, close_price, volume, company)
+                VALUES(:symbol, :date, :price, :volume, :company)
+                ON CONFLICT(symbol, date) DO NOTHING
+            """), rows)
+            symbols = {r["symbol"] for r in rows if r.get("company")}
+            for sym in symbols:
+                comp = next((r["company"] for r in rows if r["symbol"] == sym and r.get("company")), "")
+                if comp:
+                    _backfill_company_symbol(db, sym, comp)
         db.commit()
         return len(rows)
     except Exception as e:
@@ -232,6 +261,84 @@ def ingest_all_tickers_fast(chunk_size: int = 50, max_workers: int = 5):
     return {"total": prog["total_tickers"], "rows_inserted": prog["rows_inserted"], "processed": prog["processed_tickers"]}
 
 
+def ingest_latest_prices(max_workers: int = 3):
+    """
+    Lightweight daily ingest — fetches only last 2 days of price data
+    + company/market_cap/sector from Polygon for ALL tickers already in DB.
+    Runs every 4 hours + market open. Much faster than full 60-day ingest.
+    After completion, auto-triggers refresh_calculated_stocks().
+    """
+    print("ingest_latest_prices: starting...")
+
+    # Get all symbols that already have data in DB
+    db = SessionLocal()
+    try:
+        rows = db.execute(text(
+            "SELECT DISTINCT symbol FROM stock_prices"
+        )).fetchall()
+        all_symbols = [r[0] for r in rows]
+    finally:
+        db.close()
+
+    if not all_symbols:
+        print("ingest_latest_prices: no symbols in DB, skipping")
+        return {"total": 0, "rows_inserted": 0}
+
+    print(f"ingest_latest_prices: updating {len(all_symbols)} symbols")
+
+    def process_ticker(ticker: str) -> list:
+        try:
+            # 1) Get metadata (company, market_cap, sector) — 1 API call
+            details = _get_ticker_details(ticker)
+
+            # 2) Get last 5 days of prices — 1 API call (5 days to cover weekends)
+            df = _get_ohlcv(ticker, days=5)
+            if df.empty:
+                return []
+
+            rows = []
+            for _, row in df.iterrows():
+                if pd.isna(row["Close"]) or pd.isna(row["Volume"]):
+                    continue
+                rows.append({
+                    "symbol":     ticker,
+                    "date":       row["Date"].to_pydatetime() if hasattr(row["Date"], "to_pydatetime") else row["Date"],
+                    "price":      float(row["Close"]),
+                    "volume":     int(row["Volume"]),
+                    "company":    details["company"],
+                    "market_cap": details["market_cap"],
+                    "sector":     details["sector"],
+                })
+            return rows
+        except Exception as e:
+            print(f"  ingest_latest error [{ticker}]: {e}")
+            return []
+
+    # Process in chunks to respect Polygon rate limits (5 calls/min on free tier)
+    # Each ticker = 2 API calls (details + ohlcv), so ~2.5 tickers/min on free tier
+    # With sleep(0.5) between tickers = safe margin
+    chunks = list(_chunk_list(all_symbols, 50))
+    total_inserted = 0
+
+    for chunk_idx, chunk in enumerate(chunks):
+        all_rows = []
+        for ticker in chunk:
+            all_rows.extend(process_ticker(ticker))
+            time.sleep(0.5)  # Polygon free tier rate limit
+
+        inserted = _bulk_insert_rows(all_rows)
+        total_inserted += inserted
+        print(f"  Chunk {chunk_idx + 1}/{len(chunks)}: {inserted} rows upserted (total: {total_inserted})")
+
+    print(f"ingest_latest_prices: DONE — {total_inserted} rows upserted for {len(all_symbols)} symbols")
+
+    # Auto-trigger calculated_stocks refresh after new data is in
+    print("ingest_latest_prices: triggering refresh_calculated_stocks...")
+    refresh_calculated_stocks()
+
+    return {"total": len(all_symbols), "rows_inserted": total_inserted}
+
+
 def ingest_next_batch():
     all_tickers = load_tickers()
     db = SessionLocal()
@@ -260,7 +367,7 @@ def ingest_next_batch():
 # ── Sectors ───────────────────────────────────────────────────────────────────
 
 def get_all_sectors() -> List[str]:
-    """Return distinct non-null sectors from DB."""
+    """Return distinct non-null sectors from stock_prices."""
     db = SessionLocal()
     try:
         rows = db.execute(text("""
@@ -273,109 +380,51 @@ def get_all_sectors() -> List[str]:
         db.close()
 
 
-# ── Analysis ──────────────────────────────────────────────────────────────────
+# ── Refresh calculated_stocks (every 10 hours) ───────────────────────────────
 
-def analyze_stock_from_db(ticker: str, min_volume_surge_pct: float = 1.5):
-    try:
-        db = SessionLocal()
-        rows = db.execute(text("""
-            SELECT date, close_price, volume FROM stock_prices
-            WHERE symbol = :symbol ORDER BY date ASC LIMIT 60
-        """), {"symbol": ticker}).fetchall()
-        db.close()
-
-        if not rows or len(rows) < 21:
-            return None
-
-        hist    = pd.DataFrame(rows, columns=["Date", "Close", "Volume"]).sort_values("Date")
-        volumes = hist["Volume"].dropna()
-        prices  = hist["Close"].dropna()
-
-        if len(volumes) < 21 or len(prices) < 2:
-            return None
-
-        avg_volume   = volumes.iloc[-21:-1].mean()
-        today_volume = volumes.iloc[-1]
-        prev_close   = prices.iloc[-2]
-        price        = prices.iloc[-1]
-
-        if not all(pd.notna(x) for x in [avg_volume, today_volume, price, prev_close]):
-            return None
-        if avg_volume <= 0 or today_volume <= 0 or prev_close == 0:
-            return None
-
-        volume_surge = ((today_volume - avg_volume) / avg_volume) * 100
-        price_change = ((price - prev_close) / prev_close) * 100
-
-        if volume_surge < min_volume_surge_pct:
-            return None
-
-        db = SessionLocal()
-        comp_row = db.execute(text(
-            "SELECT company, market_cap FROM stock_prices WHERE symbol=:symbol AND company IS NOT NULL AND company<>'' ORDER BY date DESC LIMIT 1"
-        ), {"symbol": ticker}).fetchone()
-        db.close()
-
-        mc = comp_row[1] if comp_row and comp_row[1] else None
-
-        return {
-            "symbol":             ticker,
-            "company":            comp_row[0] if comp_row else "",
-            "price":              float(round(price, 2)),
-            "price_change":       float(round(price_change, 2)),
-            "market_cap_billion": round(float(mc) / 1_000_000_000, 2) if mc else 0.0,
-            "today_volume":       int(today_volume),
-            "avg_volume":         int(avg_volume),
-            "volume_surge":       float(round(volume_surge, 2)),
-        }
-    except Exception:
-        return None
-
-
-def get_top_stocks_from_db(
-    min_volume_surge_pct: float = 1.5,
-    limit: int = 10,
-    sectors: List[str] = None,
-):
+def refresh_calculated_stocks():
     """
-    Single fast SQL query with optional sector filter.
-    sectors=None means all sectors.
-    sectors=["Technology","Healthcare"] filters to those sectors only.
-    limit=50 means return up to 50, applied AFTER sector filter.
+    Heavy calculation runs here in the background every 10 hours.
+    Reads stock_prices → calculates avg_volume_20d, volume_surge, price_change
+    → calls Groq for 7-day stock_insight
+    → upserts into calculated_stocks table (one row per symbol).
     """
+    print("refresh_calculated_stocks: starting...")
+
     db = SessionLocal()
     try:
-        # Build sector filter clause
-        sector_clause = ""
-        params = {"threshold": min_volume_surge_pct, "limit": limit}
-
-        if sectors:
-            placeholders = ", ".join([f":sector_{i}" for i in range(len(sectors))])
-            sector_clause = f"AND sp.sector IN ({placeholders})"
-            for i, s in enumerate(sectors):
-                params[f"sector_{i}"] = s
-
-        rows = db.execute(text(f"""
+        rows = db.execute(text("""
             WITH ranked AS (
+                -- Rank rows per symbol newest first, only valid rows
                 SELECT
-                    symbol, company, close_price, volume,
-                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn,
-                    COUNT(*)     OVER (PARTITION BY symbol)                    AS total_rows
+                    symbol, close_price, volume,
+                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
                 FROM stock_prices
-                WHERE close_price IS NOT NULL AND volume IS NOT NULL
+                WHERE close_price IS NOT NULL
+                  AND volume      IS NOT NULL
+                  AND volume      > 0
             ),
             latest AS (
-                SELECT symbol, company, close_price AS price, volume AS today_volume
-                FROM ranked WHERE rn = 1 AND total_rows >= 21
+                -- rn=1 = most recent trading day = "today"
+                SELECT symbol, close_price AS price, volume AS today_volume
+                FROM ranked WHERE rn = 1
             ),
             prev AS (
+                -- rn=2 = previous trading day = for price_change %
                 SELECT symbol, close_price AS prev_close
                 FROM ranked WHERE rn = 2
             ),
             avg_vol AS (
-                SELECT symbol, AVG(volume) AS avg_volume
-                FROM ranked WHERE rn BETWEEN 2 AND 21
+                -- rn=2 to rn=21 = up to 20 previous days for avg
+                -- HAVING >= 10 allows symbols with at least 10 days history
+                -- (avoids rejecting valid symbols that have slightly less than 20 days)
+                SELECT
+                    symbol,
+                    ROUND(AVG(volume::NUMERIC), 0)::BIGINT AS avg_volume_20d
+                FROM ranked
+                WHERE rn BETWEEN 2 AND 21
                 GROUP BY symbol
+                HAVING COUNT(*) >= 10
             ),
             mc AS (
                 SELECT DISTINCT ON (symbol) symbol, market_cap
@@ -391,25 +440,130 @@ def get_top_stocks_from_db(
             )
             SELECT
                 l.symbol,
-                l.company,
-                ROUND(l.price::numeric, 2)                                                           AS price,
-                l.today_volume,
-                ROUND(a.avg_volume::numeric, 0)                                                      AS avg_volume,
-                ROUND(((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100)::numeric, 2) AS volume_surge,
-                ROUND(((l.price - p.prev_close) / NULLIF(p.prev_close,0) * 100)::numeric, 2)        AS price_change,
+                a.avg_volume_20d,
+                ROUND(
+                    ((l.today_volume::NUMERIC - a.avg_volume_20d::NUMERIC)
+                     / NULLIF(a.avg_volume_20d::NUMERIC, 0) * 100),
+                2) AS volume_surge,
+                ROUND(
+                    ((l.price::NUMERIC - p.prev_close::NUMERIC)
+                     / NULLIF(p.prev_close::NUMERIC, 0) * 100),
+                2) AS price_change,
+                l.price,
                 mc.market_cap,
-                sp.sector
-            FROM latest l
-            JOIN prev    p   ON l.symbol = p.symbol
-            JOIN avg_vol a   ON l.symbol = a.symbol
-            JOIN mc          ON l.symbol = mc.symbol
-            JOIN sec sp      ON l.symbol = sp.symbol
-            WHERE a.avg_volume >= 500000
-              AND l.price >= 5
-              AND ((l.today_volume - a.avg_volume) / NULLIF(a.avg_volume,0) * 100) >= :threshold
-              AND mc.market_cap >= 1000000000
+                sec.sector
+            FROM latest  l
+            JOIN prev    p  ON l.symbol = p.symbol
+            JOIN avg_vol a  ON l.symbol = a.symbol
+            JOIN mc         ON l.symbol = mc.symbol
+            JOIN sec ON l.symbol = sec.symbol
+            WHERE a.avg_volume_20d >= 500000
+              AND l.price          >= 5
+              AND mc.market_cap    >= 1000000000
+        """)).fetchall()
+    except Exception as e:
+        print(f"refresh_calculated_stocks SQL error: {e}")
+        db.close()
+        return
+    finally:
+        db.close()
+
+    print(f"refresh_calculated_stocks: {len(rows)} symbols qualify for calculation")
+
+    # Bulk upsert in batches of 100 (much faster than one-by-one)
+    upsert_rows = []
+    for r in rows:
+        upsert_rows.append({
+            "symbol":         r[0],
+            "avg_volume_20d": int(r[1]),
+            "volume_surge":   float(r[2]),
+            "price_change":   float(r[3]),
+            "sector":         str(r[6]) if r[6] else "", 
+        })
+
+    updated = 0
+    batch_size = 100
+    for i in range(0, len(upsert_rows), batch_size):
+        batch = upsert_rows[i:i + batch_size]
+        db2 = SessionLocal()
+        try:
+            db2.execute(text("""
+                INSERT INTO calculated_stocks
+                    (symbol, avg_volume_20d, volume_surge, price_change, sector, last_updated)
+                VALUES
+                    (:symbol, :avg_volume_20d, :volume_surge, :price_change, :sector, NOW())
+                ON CONFLICT (symbol) DO UPDATE SET
+                    avg_volume_20d = EXCLUDED.avg_volume_20d,
+                    volume_surge   = EXCLUDED.volume_surge,
+                    price_change   = EXCLUDED.price_change,
+                    sector = EXCLUDED.sector,
+                    last_updated   = NOW()
+            """), batch)
+            db2.commit()
+            updated += len(batch)
+            print(f"  Batch {i // batch_size + 1}: upserted {len(batch)} rows (total: {updated})")
+        except Exception as e:
+            db2.rollback()
+            print(f"  Batch upsert error: {e}")
+        finally:
+            db2.close()
+
+    print(f"refresh_calculated_stocks: DONE — {updated} symbols updated")
+
+
+# ── Fast query from calculated_stocks ────────────────────────────────────────
+
+def get_top_stocks_from_db(
+    min_volume_surge_pct: float = 1.5,
+    limit: int = 50,
+    sectors: List[str] = None,
+):
+    """
+    Instant query — reads pre-calculated data from calculated_stocks
+    JOINed with latest row per symbol from stock_prices for
+    current price, company, market_cap, sector.
+
+    Optimized: first filters calculated_stocks (small table), then
+    only joins the matching symbols from stock_prices via LATERAL join.
+    """
+    db = SessionLocal()
+    try:
+        sector_clause = ""
+        params = {"threshold": min_volume_surge_pct, "limit": limit}
+
+        if sectors:
+            placeholders = ", ".join([f":sector_{i}" for i in range(len(sectors))])
+            sector_clause = f"AND c.sector IN ({placeholders})"
+            for i, s in enumerate(sectors):
+                params[f"sector_{i}"] = s
+
+        rows = db.execute(text(f"""
+            SELECT
+                c.symbol,
+                sp.company,
+                sp.sector,
+                sp.close_price        AS price,
+                sp.market_cap,
+                sp.volume             AS today_volume,
+                c.avg_volume_20d,
+                c.volume_surge,
+                c.price_change,
+                c.stock_insight,
+                c.last_updated
+            FROM calculated_stocks c
+            JOIN LATERAL (
+                SELECT close_price, volume, company, market_cap, sector
+                FROM stock_prices
+                WHERE symbol = c.symbol
+                ORDER BY date DESC
+                LIMIT 1
+            ) sp ON true
+            WHERE c.volume_surge    >= :threshold
+              AND c.avg_volume_20d  >= 500000
+              AND sp.market_cap     >= 1000000000
+              AND sp.close_price    >= 5
               {sector_clause}
-            ORDER BY volume_surge DESC
+            ORDER BY c.volume_surge DESC
             LIMIT :limit
         """), params).fetchall()
     except Exception as e:
@@ -421,17 +575,19 @@ def get_top_stocks_from_db(
     results = []
     for r in rows:
         try:
-            mc = r[7]
+            mc = r[4]
             results.append({
                 "symbol":             str(r[0]),
                 "company":            str(r[1]) if r[1] else "",
-                "price":              float(r[2]),
-                "price_change":       float(r[6]),
+                "sector":             str(r[2]) if r[2] else "",
+                "price":              float(r[3]),
                 "market_cap_billion": round(float(mc) / 1_000_000_000, 2) if mc else 0.0,
-                "today_volume":       int(float(r[3])),
-                "avg_volume":         int(float(r[4])),
-                "volume_surge":       float(r[5]),
-                "sector":             str(r[8]) if r[8] else "",
+                "today_volume":       int(r[5]),
+                "avg_volume":         int(r[6]),
+                "volume_surge":       float(r[7]),
+                "price_change":       float(r[8]),
+                "stock_insight":      str(r[9]) if r[9] else "",
+                "last_updated":       str(r[10])[:16] if r[10] else "",
             })
         except Exception as e:
             print(f"Row parse error {r[0]}: {e}")
@@ -439,6 +595,8 @@ def get_top_stocks_from_db(
 
     return results
 
+
+# ── Chart data (from stock_prices directly) ───────────────────────────────────
 
 def get_chart_data(symbol: str):
     db = SessionLocal()
