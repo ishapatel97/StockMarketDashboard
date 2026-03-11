@@ -123,7 +123,7 @@ def _bulk_insert_rows(rows: list) -> int:
                     volume      = EXCLUDED.volume,
                     company     = COALESCE(NULLIF(EXCLUDED.company, ''), stock_prices.company),
                     market_cap  = COALESCE(EXCLUDED.market_cap, stock_prices.market_cap),
-                    sector      = COALESCE(NULLIF(EXCLUDED.sector, ''), stock_prices.sector)
+                    sector      = COALESCE(NULLIF(stock_prices.sector, ''), EXCLUDED.sector)
             """), rows)
         else:
             db.execute(text("""

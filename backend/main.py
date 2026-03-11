@@ -75,6 +75,76 @@ scheduler.add_job(
 )
 
 
+# Known clean yfinance sector names
+YFINANCE_SECTORS = {
+    "Technology", "Healthcare", "Financial Services", "Consumer Cyclical",
+    "Industrials", "Communication Services", "Consumer Defensive", "Energy",
+    "Basic Materials", "Real Estate", "Utilities",
+}
+
+
+def cleanup_polygon_sectors():
+    """
+    One-time fix: Polygon wrote SIC descriptions (e.g. 'Pharmaceutical Preparations')
+    over the clean yfinance sectors (e.g. 'Healthcare'). This restores them.
+    For each symbol, find the yfinance sector from older rows and apply it everywhere.
+    """
+    from sqlalchemy import text as sa_text
+    from database import engine as db_engine
+
+    logger.info("Checking for Polygon SIC sectors to clean up...")
+    with db_engine.connect() as conn:
+        # Get all distinct sectors currently in DB
+        rows = conn.execute(sa_text(
+            "SELECT DISTINCT sector FROM stock_prices WHERE sector IS NOT NULL AND sector != ''"
+        )).fetchall()
+        current_sectors = {r[0] for r in rows}
+
+        # Find sectors that are NOT in the yfinance list (these are Polygon SIC descriptions)
+        bad_sectors = current_sectors - YFINANCE_SECTORS
+        if not bad_sectors:
+            logger.info("No Polygon SIC sectors found — all clean.")
+            return
+
+        logger.info(f"Found {len(bad_sectors)} non-yfinance sectors to fix: {list(bad_sectors)[:5]}...")
+
+        # For each symbol that has a bad sector, try to find a good yfinance sector from other rows
+        for bad_sector in bad_sectors:
+            # Get symbols with this bad sector
+            syms = conn.execute(sa_text(
+                "SELECT DISTINCT symbol FROM stock_prices WHERE sector = :bad"
+            ), {"bad": bad_sector}).fetchall()
+
+            for (sym,) in syms:
+                # Check if this symbol has a good yfinance sector in any other row
+                good = conn.execute(sa_text("""
+                    SELECT sector FROM stock_prices
+                    WHERE symbol = :sym AND sector IS NOT NULL AND sector != '' AND sector != :bad
+                    LIMIT 1
+                """), {"sym": sym, "bad": bad_sector}).fetchone()
+
+                if good and good[0] in YFINANCE_SECTORS:
+                    # Restore the good sector
+                    conn.execute(sa_text(
+                        "UPDATE stock_prices SET sector = :good WHERE symbol = :sym AND sector = :bad"
+                    ), {"good": good[0], "sym": sym, "bad": bad_sector})
+
+        # Also clean up calculated_stocks
+        conn.execute(sa_text("""
+            UPDATE calculated_stocks cs SET sector = sp.sector
+            FROM (
+                SELECT DISTINCT ON (symbol) symbol, sector
+                FROM stock_prices
+                WHERE sector IS NOT NULL AND sector != ''
+                ORDER BY symbol, date DESC
+            ) sp
+            WHERE cs.symbol = sp.symbol AND cs.sector != sp.sector
+        """))
+
+        conn.commit()
+        logger.info("Polygon SIC sectors cleaned up successfully.")
+
+
 def ensure_indexes():
     """Create indexes on stock_prices and calculated_stocks for fast queries."""
     from sqlalchemy import text as sa_text
@@ -116,6 +186,12 @@ async def lifespan(app: FastAPI):
         ensure_indexes()
     except Exception as e:
         logger.warning(f"Index creation failed (non-fatal): {e}")
+
+    # Clean up Polygon SIC sectors that overwrote yfinance sectors
+    try:
+        cleanup_polygon_sectors()
+    except Exception as e:
+        logger.warning(f"Sector cleanup failed (non-fatal): {e}")
 
     scheduler.start()
     logger.info("Scheduler started.")

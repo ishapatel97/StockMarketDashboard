@@ -14,8 +14,8 @@ import { Line } from "react-chartjs-2";
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Filler);
 
-const API = "https://stockmarketdashboard-727w.onrender.com";
-//const API = "http://127.0.0.1:8000";
+//const API = "https://stockmarketdashboard-727w.onrender.com";
+const API = "http://127.0.0.1:8000";
 
 const SECTOR_COLORS = {
   "Technology":             "#6366f1",
@@ -235,10 +235,13 @@ function StockDashboard() {
   const [insights, setInsights]             = useState({});   // { symbol: "insight text" }
   const insightQueueRef = useRef(null);                       // to cancel pending fetches
 
-  // Load sectors once on mount
+  // Only show these clean sector names
+  const VALID_SECTORS = new Set(Object.keys(SECTOR_COLORS));
+
+  // Load sectors once on mount — filter to only known yfinance sectors
   useEffect(() => {
     axios.get(`${API}/sectors`)
-      .then(res => setAllSectors(res.data || []))
+      .then(res => setAllSectors((res.data || []).filter(s => VALID_SECTORS.has(s))))
       .catch(() => {});
   }, []);
 
@@ -573,7 +576,6 @@ function StockDashboard() {
                 <th>Avg Vol (20d)</th>
                 <th>Mkt Cap (B)</th>
                 <th>Vol Surge %</th>
-                <th>AI Insight</th>
               </tr>
             </thead>
             <tbody>
@@ -596,7 +598,6 @@ function StockDashboard() {
                   <td>{stock.avg_volume.toLocaleString()}</td>
                   <td>${stock.market_cap_billion}B</td>
                   <td className="surge-value">{stock.volume_surge}%</td>
-                  <td className="insight-cell">{stock.stock_insight || "—"}</td>
                 </tr>
               ))}
             </tbody>

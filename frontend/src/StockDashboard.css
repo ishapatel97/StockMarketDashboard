@@ -722,9 +722,32 @@ h1 {
     padding: 10px 12px;
     font-size: 12px;
   }
+
+  /* Dropdown menus: centered fixed popup on mobile */
+  .sector-dropdown-menu,
+  .sort-dropdown-menu {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: calc(100vw - 32px);
+    max-width: 340px;
+    max-height: 70vh;
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sector-dropdown-list,
+  .sort-dropdown-list {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════���══════════
    RESPONSIVE — SMALL PHONE (≤ 480px)
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -883,6 +906,7 @@ h1 {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; cursor: pointer;
   font-size: 0.83rem; color: #374151; transition: background 0.15s;
+  justify-content: flex-start; text-align: left;
 }
 .sector-option:hover { background: #f9fafb; }
 .sector-option input[type="checkbox"] {
