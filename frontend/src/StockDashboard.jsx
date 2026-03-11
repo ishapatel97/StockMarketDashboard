@@ -287,8 +287,9 @@ function StockDashboard() {
     axios.get(`${API}/chart/${symbol}`)
       .then(res => {
         const dates = (res.data.dates || []).map(date => {
-          const d = new Date(date);
-          return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          // Parse "YYYY-MM-DD" directly to avoid timezone shift
+          const parts = date.split("-");
+          return `${parts[1]}-${parts[2]}`;
         });
         setChartData({
           labels: dates,

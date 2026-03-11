@@ -602,13 +602,14 @@ def get_chart_data(symbol: str):
     db = SessionLocal()
     rows = db.execute(text("""
         SELECT date, close_price, volume FROM stock_prices
-        WHERE symbol = :symbol ORDER BY date DESC LIMIT 20
+        WHERE symbol = :symbol AND close_price IS NOT NULL
+        ORDER BY date DESC LIMIT 30
     """), {"symbol": symbol}).fetchall()
     db.close()
 
     rows = list(reversed(rows))
 
-    if len(rows) >= 20:
+    if len(rows) >= 5:
         dates   = [str(r[0])[:10] for r in rows]
         prices  = [float(r[1]) if r[1] else 0 for r in rows]
         volumes = [int(r[2])   if r[2] else 0 for r in rows]
