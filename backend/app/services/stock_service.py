@@ -391,13 +391,24 @@ def refresh_calculated_stocks():
     """
     print("refresh_calculated_stocks: starting...")
 
+    # Ensure data_as_of column exists
+    db_alter = SessionLocal()
+    try:
+        db_alter.execute(text(
+            "ALTER TABLE calculated_stocks ADD COLUMN IF NOT EXISTS data_as_of DATE"
+        ))
+        db_alter.commit()
+    except Exception:
+        db_alter.rollback()
+    finally:
+        db_alter.close()
+
     db = SessionLocal()
     try:
         rows = db.execute(text("""
             WITH ranked AS (
-                -- Rank rows per symbol newest first, only valid rows
                 SELECT
-                    symbol, close_price, volume,
+                    symbol, close_price, volume, date,
                     ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
                 FROM stock_prices
                 WHERE close_price IS NOT NULL
@@ -405,19 +416,14 @@ def refresh_calculated_stocks():
                   AND volume      > 0
             ),
             latest AS (
-                -- rn=1 = most recent trading day = "today"
-                SELECT symbol, close_price AS price, volume AS today_volume
+                SELECT symbol, close_price AS price, volume AS today_volume, date AS latest_date
                 FROM ranked WHERE rn = 1
             ),
             prev AS (
-                -- rn=2 = previous trading day = for price_change %
                 SELECT symbol, close_price AS prev_close
                 FROM ranked WHERE rn = 2
             ),
             avg_vol AS (
-                -- rn=2 to rn=21 = up to 20 previous days for avg
-                -- HAVING >= 10 allows symbols with at least 10 days history
-                -- (avoids rejecting valid symbols that have slightly less than 20 days)
                 SELECT
                     symbol,
                     ROUND(AVG(volume::NUMERIC), 0)::BIGINT AS avg_volume_20d
@@ -451,7 +457,8 @@ def refresh_calculated_stocks():
                 2) AS price_change,
                 l.price,
                 mc.market_cap,
-                sec.sector
+                sec.sector,
+                l.latest_date
             FROM latest  l
             JOIN prev    p  ON l.symbol = p.symbol
             JOIN avg_vol a  ON l.symbol = a.symbol
@@ -478,7 +485,8 @@ def refresh_calculated_stocks():
             "avg_volume_20d": int(r[1]),
             "volume_surge":   float(r[2]),
             "price_change":   float(r[3]),
-            "sector":         str(r[6]) if r[6] else None, 
+            "sector":         str(r[6]) if r[6] else None,
+            "data_as_of":     r[7],  # latest_date from stock_prices
         })
 
     updated = 0
@@ -489,14 +497,15 @@ def refresh_calculated_stocks():
         try:
             db2.execute(text("""
                 INSERT INTO calculated_stocks
-                    (symbol, avg_volume_20d, volume_surge, price_change, sector, last_updated)
+                    (symbol, avg_volume_20d, volume_surge, price_change, sector, data_as_of, last_updated)
                 VALUES
-                    (:symbol, :avg_volume_20d, :volume_surge, :price_change, :sector, NOW())
+                    (:symbol, :avg_volume_20d, :volume_surge, :price_change, :sector, :data_as_of, NOW())
                 ON CONFLICT (symbol) DO UPDATE SET
                     avg_volume_20d = EXCLUDED.avg_volume_20d,
                     volume_surge   = EXCLUDED.volume_surge,
                     price_change   = EXCLUDED.price_change,
-                    sector = COALESCE(NULLIF(EXCLUDED.sector, ''), calculated_stocks.sector),
+                    sector         = COALESCE(NULLIF(EXCLUDED.sector, ''), calculated_stocks.sector),
+                    data_as_of     = EXCLUDED.data_as_of,
                     last_updated   = NOW()
             """), batch)
             db2.commit()
@@ -507,6 +516,24 @@ def refresh_calculated_stocks():
             print(f"  Batch upsert error: {e}")
         finally:
             db2.close()
+
+    # Clean up stale rows — remove symbols with no recent price data (>5 days old)
+    db_cleanup = SessionLocal()
+    try:
+        result = db_cleanup.execute(text("""
+            DELETE FROM calculated_stocks
+            WHERE data_as_of IS NOT NULL
+              AND data_as_of < CURRENT_DATE - INTERVAL '4 days'
+        """))
+        db_cleanup.commit()
+        stale_count = result.rowcount
+        if stale_count > 0:
+            print(f"  Cleaned up {stale_count} stale rows from calculated_stocks")
+    except Exception as e:
+        db_cleanup.rollback()
+        print(f"  Stale cleanup error: {e}")
+    finally:
+        db_cleanup.close()
 
     print(f"refresh_calculated_stocks: DONE — {updated} symbols updated")
 
@@ -552,7 +579,7 @@ def get_top_stocks_from_db(
                 c.last_updated
             FROM calculated_stocks c
             JOIN LATERAL (
-                SELECT close_price, volume, company, market_cap, sector
+                SELECT close_price, volume, company, market_cap, sector, date
                 FROM stock_prices
                 WHERE symbol = c.symbol
                 ORDER BY date DESC
@@ -562,6 +589,7 @@ def get_top_stocks_from_db(
               AND c.avg_volume_20d  >= 500000
               AND sp.market_cap     >= 1000000000
               AND sp.close_price    >= 5
+              AND sp.date           >= CURRENT_DATE - INTERVAL '4 days'
               {sector_clause}
             ORDER BY c.volume_surge DESC
             LIMIT :limit

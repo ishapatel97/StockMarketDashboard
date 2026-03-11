@@ -173,11 +173,11 @@ function StockCard({ stock, onClick }) {
 
         {/* Header: symbol + change badge + sector */}
         <div className="stock-card-header">
-          <div>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <h3>{stock.symbol}</h3>
             {stock.company && <div className="stock-card-company">{stock.company}</div>}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px", flexShrink: 0 }}>
             <span className={isPositive ? "badge positive" : isNegative ? "badge negative" : "badge neutral"}>
               {isPositive ? "+" : ""}{stock.price_change}%
             </span>
