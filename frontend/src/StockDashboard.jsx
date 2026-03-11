@@ -14,8 +14,8 @@ import { Line } from "react-chartjs-2";
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Filler);
 
-//const API = "https://stockmarketdashboard-727w.onrender.com";
-const API = "http://127.0.0.1:8000";
+const API = "https://stockmarketdashboard-727w.onrender.com";
+//const API = "http://127.0.0.1:8000";
 
 const SECTOR_COLORS = {
   "Technology":             "#6366f1",
@@ -487,9 +487,9 @@ function StockDashboard() {
           <div className="empty-state-icon">📊</div>
           <h2>No Stocks Found</h2>
           <p>No stocks match the current filters. Try lowering the threshold or selecting different sectors.</p>
-          <p style={{ fontSize: "0.85rem", color: "#9ca3af", marginTop: "8px" }}>
+          {/* <p style={{ fontSize: "0.85rem", color: "#9ca3af", marginTop: "8px" }}>
             Note: Data is pre-calculated every 10 hours. If the table is empty, trigger a manual refresh via POST /refresh-summary.
-          </p>
+          </p> */}
         </div>
       )}
 
