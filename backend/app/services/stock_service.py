@@ -478,7 +478,7 @@ def refresh_calculated_stocks():
             "avg_volume_20d": int(r[1]),
             "volume_surge":   float(r[2]),
             "price_change":   float(r[3]),
-            "sector":         str(r[6]) if r[6] else "", 
+            "sector":         str(r[6]) if r[6] else None, 
         })
 
     updated = 0
@@ -496,7 +496,7 @@ def refresh_calculated_stocks():
                     avg_volume_20d = EXCLUDED.avg_volume_20d,
                     volume_surge   = EXCLUDED.volume_surge,
                     price_change   = EXCLUDED.price_change,
-                    sector = EXCLUDED.sector,
+                    sector = COALESCE(NULLIF(EXCLUDED.sector, ''), calculated_stocks.sector),
                     last_updated   = NOW()
             """), batch)
             db2.commit()

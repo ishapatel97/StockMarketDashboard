@@ -74,6 +74,19 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+# Recalculate calculated_stocks every 6 hours (independent of ingestion)
+def scheduled_refresh():
+    logger.info("Running scheduled refresh_calculated_stocks (6h)...")
+    refresh_calculated_stocks()
+    logger.info("Scheduled refresh complete.")
+
+scheduler.add_job(
+    scheduled_refresh,
+    CronTrigger(hour="*/6"),
+    id="refresh_calculated_6h",
+    replace_existing=True,
+)
+
 
 # Known clean yfinance sector names
 YFINANCE_SECTORS = {
